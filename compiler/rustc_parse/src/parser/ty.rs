@@ -406,29 +406,53 @@ impl<'a> Parser<'a> {
     /// Parses an array (`[TYPE; EXPR]`) or slice (`[TYPE]`) type.
     /// The opening `[` bracket is already eaten.
     fn parse_array_or_slice_ty(&mut self) -> PResult<'a, TyKind> {
-        let elt_ty = match self.parse_ty() {
-            Ok(ty) => ty,
-            Err(mut err)
+        let (elt_ty, invalid_ty_err) = match self.parse_ty() {
+            Ok(ty) => (ty, None),
+            Err(err)
                 if self.look_ahead(1, |t| t.kind == token::CloseDelim(Delimiter::Bracket))
                     | self.look_ahead(1, |t| t.kind == token::Semi) =>
             {
                 // Recover from `[LIT; EXPR]` and `[LIT]`
                 self.bump();
-                err.emit();
-                self.mk_ty(self.prev_token.span, TyKind::Err)
+                (self.mk_ty(self.prev_token.span, TyKind::Err), Some(err))
             }
             Err(err) => return Err(err),
         };
 
         let ty = if self.eat(&token::Semi) {
             let mut length = self.parse_anon_const_expr()?;
-            if let Err(e) = self.expect(&token::CloseDelim(Delimiter::Bracket)) {
+
+            if let Some(mut err) = invalid_ty_err {
+                err.help("array types are declared using `[TYPE; LENGTH]`");
+                if let Ok(ty_snippet) = self.sess.source_map().span_to_snippet(elt_ty.span) {
+                    err.span_suggestion(
+                        length.value.span,
+                        "replace the length with the type",
+                        ty_snippet,
+                        Applicability::MaybeIncorrect,
+                    );
+                }
+                if let Ok(len_snipped) = self.sess.source_map().span_to_snippet(length.value.span) {
+                    err.span_suggestion(
+                        elt_ty.span,
+                        "replace the type with the len",
+                        len_snipped,
+                        Applicability::MaybeIncorrect,
+                    );
+                }
+                err.emit();
+            } else if let Err(e) = self.expect(&token::CloseDelim(Delimiter::Bracket)) {
                 // Try to recover from `X<Y, ...>` when `X::<Y, ...>` works
                 self.check_mistyped_turbofish_with_multiple_type_params(e, &mut length.value)?;
+
                 self.expect(&token::CloseDelim(Delimiter::Bracket))?;
             }
+
             TyKind::Array(elt_ty, length)
         } else {
+            if let Some(mut err) = invalid_ty_err {
+                err.emit();
+            }
             self.expect(&token::CloseDelim(Delimiter::Bracket))?;
             TyKind::Slice(elt_ty)
         };
