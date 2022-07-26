@@ -18,7 +18,7 @@ error[E0080]: evaluation of constant value failed
 LL |         unsafe { intrinsics::offset(self, count) }
    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |                  |
-   |                  out-of-bounds pointer arithmetic: allocN has size 1, so pointer to 2 bytes starting at offset 0 is out-of-bounds
+   |                  out-of-bounds pointer arithmetic: allocN has size 1, so pointer at offset 2 is out-of-bounds
    |                  inside `ptr::const_ptr::<impl *const u8>::offset` at $SRC_DIR/core/src/ptr/const_ptr.rs:LL:COL
    |
   ::: $DIR/offset_ub.rs:8:43
@@ -32,7 +32,7 @@ error[E0080]: evaluation of constant value failed
 LL |         unsafe { intrinsics::offset(self, count) }
    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |                  |
-   |                  out-of-bounds pointer arithmetic: allocN has size 100, so pointer to 101 bytes starting at offset 0 is out-of-bounds
+   |                  out-of-bounds pointer arithmetic: allocN has size 100, so pointer at offset 101 is out-of-bounds
    |                  inside `ptr::const_ptr::<impl *const u8>::offset` at $SRC_DIR/core/src/ptr/const_ptr.rs:LL:COL
    |
   ::: $DIR/offset_ub.rs:9:45
@@ -102,7 +102,7 @@ error[E0080]: evaluation of constant value failed
 LL |         unsafe { intrinsics::offset(self, count) }
    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |                  |
-   |                  out-of-bounds pointer arithmetic: allocN has size 1, so pointer to 2 bytes starting at offset -4 is out-of-bounds
+   |                  out-of-bounds pointer arithmetic: allocN has size 1, so pointer at offset -2 is out-of-bounds
    |                  inside `ptr::const_ptr::<impl *const u8>::offset` at $SRC_DIR/core/src/ptr/const_ptr.rs:LL:COL
    |
   ::: $DIR/offset_ub.rs:15:49
@@ -116,27 +116,13 @@ error[E0080]: evaluation of constant value failed
 LL |         unsafe { intrinsics::offset(self, count) }
    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |                  |
-   |                  out-of-bounds pointer arithmetic: allocN has size 0, so pointer to 1 byte starting at offset 0 is out-of-bounds
+   |                  out-of-bounds pointer arithmetic: allocN has size 0, so pointer at offset 1 is out-of-bounds
    |                  inside `ptr::const_ptr::<impl *const u8>::offset` at $SRC_DIR/core/src/ptr/const_ptr.rs:LL:COL
    |
   ::: $DIR/offset_ub.rs:17:50
    |
 LL | pub const ZERO_SIZED_ALLOC: *const u8 = unsafe { [0u8; 0].as_ptr().offset(1) };
    |                                                  --------------------------- inside `ZERO_SIZED_ALLOC` at $DIR/offset_ub.rs:17:50
-
-error[E0080]: evaluation of constant value failed
-  --> $SRC_DIR/core/src/ptr/mut_ptr.rs:LL:COL
-   |
-LL |         unsafe { intrinsics::offset(self, count) as *mut T }
-   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |                  |
-   |                  out-of-bounds pointer arithmetic: 0x1[noalloc] is a dangling pointer (it has no provenance)
-   |                  inside `ptr::mut_ptr::<impl *mut u8>::offset` at $SRC_DIR/core/src/ptr/mut_ptr.rs:LL:COL
-   |
-  ::: $DIR/offset_ub.rs:18:42
-   |
-LL | pub const DANGLING: *const u8 = unsafe { ptr::NonNull::<u8>::dangling().as_ptr().offset(4) };
-   |                                          ------------------------------------------------- inside `DANGLING` at $DIR/offset_ub.rs:18:42
 
 error[E0080]: evaluation of constant value failed
   --> $SRC_DIR/core/src/ptr/const_ptr.rs:LL:COL
@@ -152,20 +138,6 @@ LL |         unsafe { intrinsics::offset(self, count) }
 LL | pub const NULL_OFFSET_ZERO: *const u8 = unsafe { ptr::null::<u8>().offset(0) };
    |                                                  --------------------------- inside `NULL_OFFSET_ZERO` at $DIR/offset_ub.rs:21:50
 
-error[E0080]: evaluation of constant value failed
-  --> $SRC_DIR/core/src/ptr/const_ptr.rs:LL:COL
-   |
-LL |         unsafe { intrinsics::offset(self, count) }
-   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |                  |
-   |                  out-of-bounds pointer arithmetic: 0x7f..f[noalloc] is a dangling pointer (it has no provenance)
-   |                  inside `ptr::const_ptr::<impl *const u8>::offset` at $SRC_DIR/core/src/ptr/const_ptr.rs:LL:COL
-   |
-  ::: $DIR/offset_ub.rs:24:47
-   |
-LL | pub const UNDERFLOW_ABS: *const u8 = unsafe { (usize::MAX as *const u8).offset(isize::MIN) };
-   |                                               -------------------------------------------- inside `UNDERFLOW_ABS` at $DIR/offset_ub.rs:24:47
-
-error: aborting due to 12 previous errors
+error: aborting due to 10 previous errors
 
 For more information about this error, try `rustc --explain E0080`.

@@ -595,14 +595,39 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
         // ptr and offset_ptr must be in bounds of the same allocated object. This means all of the
         // memory between these pointers must be accessible. Note that we do not require the
         // pointers to be properly aligned (unlike a read/write operation).
-        let min_ptr = if offset_bytes >= 0 { ptr } else { offset_ptr };
         // This call handles checking for integer/null pointers.
-        self.check_ptr_access_align(
-            min_ptr,
-            Size::from_bytes(offset_bytes.unsigned_abs()),
+
+        // NEW:
+
+        let pointee_size = Size::from_bytes(pointee_size.unsigned_abs());
+
+        // ptr and offset_ptr must be in bounds of the same allocated object. Therefore, make two checks
+        // for the pointers to validate that they both point to the same object, and if they do, make sure
+        // that they point to the same allocation.
+        let ptr_alloc = self.check_ptr_access_align(
+            ptr,
+            Size::ZERO,
             Align::ONE,
             CheckInAllocMsg::PointerArithmeticTest,
         )?;
+        let offset_ptr_alloc = self.check_ptr_access_align(
+            offset_ptr,
+            Size::ZERO,
+            Align::ONE,
+            CheckInAllocMsg::PointerArithmeticTest,
+        )?;
+
+        if ptr_alloc != offset_ptr_alloc {
+            let (alloc_id, alloc_size) = ptr_alloc.unwrap_or_else(|| bug!("offset gave pointer provenance it didn't have before"));
+            throw_ub!(PointerOutOfBounds {
+                alloc_id,
+                alloc_size,
+                ptr_offset: offset_bytes,
+                ptr_size: pointee_size,
+                msg: CheckInAllocMsg::PointerArithmeticTest,
+            });
+        }
+
         Ok(offset_ptr)
     }
 

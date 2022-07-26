@@ -367,7 +367,8 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
 
     /// Check if the given pointer points to live memory of given `size` and `align`
     /// (ignoring `M::enforce_alignment`). The caller can control the error message for the
-    /// out-of-bounds case.
+    /// out-of-bounds case. If it was in bounds, return the `AllocId` and alloc size for the pointer if one
+    /// exists.
     #[inline(always)]
     pub fn check_ptr_access_align(
         &self,
@@ -375,12 +376,11 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
         size: Size,
         align: Align,
         msg: CheckInAllocMsg,
-    ) -> InterpResult<'tcx> {
+    ) -> InterpResult<'tcx, Option<(AllocId, Size)>> {
         self.check_and_deref_ptr(ptr, size, Some(align), msg, |alloc_id, _, _| {
             let (size, align) = self.get_live_alloc_size_and_align(alloc_id)?;
-            Ok((size, align, ()))
-        })?;
-        Ok(())
+            Ok((size, align, (alloc_id, size)))
+        })
     }
 
     /// Low-level helper function to check if a ptr is in-bounds and potentially return a reference
