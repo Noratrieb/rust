@@ -110,6 +110,7 @@ use rustc_session::config::SymbolManglingVersion;
 use tracing::debug;
 
 mod legacy;
+mod punycode;
 mod v0;
 
 pub mod errors;
