@@ -500,6 +500,12 @@ fn print_with_analysis(
             String::from_utf8(out).unwrap()
         }
 
+        Thir => {
+            let mut out = Vec::new();
+            out.extend(b"// The THIR\n");
+            String::from_utf8(out).unwrap()
+        }
+
         ThirTree => {
             let mut out = String::new();
             abort_on_err(rustc_typeck::check_crate(tcx), tcx.sess);

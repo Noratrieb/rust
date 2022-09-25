@@ -2520,6 +2520,7 @@ fn parse_pretty(unstable_opts: &UnstableOptions, efmt: ErrorOutputType) -> Optio
         "hir,identified" => Hir(PpHirMode::Identified),
         "hir,typed" => Hir(PpHirMode::Typed),
         "hir-tree" => HirTree,
+        "thir" => Thir,
         "thir-tree" => ThirTree,
         "mir" => Mir,
         "mir-cfg" => MirCFG,
@@ -2682,6 +2683,8 @@ pub enum PpMode {
     Hir(PpHirMode),
     /// `-Zunpretty=hir-tree`
     HirTree,
+    /// `-Zunpretty=thir`
+    Thir,
     /// `-Zunpretty=thir-tree`
     ThirTree,
     /// `-Zunpretty=mir`
@@ -2701,6 +2704,7 @@ impl PpMode {
             | AstTree(PpAstTreeMode::Expanded)
             | Hir(_)
             | HirTree
+            | Thir
             | ThirTree
             | Mir
             | MirCFG => true,
@@ -2711,13 +2715,13 @@ impl PpMode {
         match *self {
             Source(_) | AstTree(_) => false,
 
-            Hir(_) | HirTree | ThirTree | Mir | MirCFG => true,
+            Hir(_) | HirTree | Thir | ThirTree | Mir | MirCFG => true,
         }
     }
 
     pub fn needs_analysis(&self) -> bool {
         use PpMode::*;
-        matches!(*self, Mir | MirCFG | ThirTree)
+        matches!(*self, Mir | MirCFG | Thir | ThirTree)
     }
 }
 
