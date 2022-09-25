@@ -312,6 +312,13 @@ rustc_queries! {
         desc { |tcx| "constructing THIR tree for `{}`", tcx.def_path_str(key.did.to_def_id()) }
     }
 
+    /// Create a THIR clone for debugging.
+    query thir_body_clone(key: ty::WithOptConstParam<LocalDefId>) -> Result<thir::Thir<'tcx>, ErrorGuaranteed> {
+        no_hash
+        arena_cache
+        desc { |tcx| "constructing THIR clone for `{}`", tcx.def_path_str(key.did.to_def_id()) }
+    }
+
     /// Set of all the `DefId`s in this crate that have MIR associated with
     /// them. This includes all the body owners, but also things like struct
     /// constructors.

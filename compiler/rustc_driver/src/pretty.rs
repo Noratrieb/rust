@@ -417,12 +417,12 @@ pub fn print_after_hir_lowering<'tcx>(
     ppm: PpMode,
     ofile: Option<&Path>,
 ) {
+    let (src, src_name) = get_source(input, tcx.sess);
+
     if ppm.needs_analysis() {
-        abort_on_err(print_with_analysis(tcx, ppm, ofile), tcx.sess);
+        abort_on_err(print_with_analysis(tcx, src, src_name, ppm, ofile), tcx.sess);
         return;
     }
-
-    let (src, src_name) = get_source(input, tcx.sess);
 
     let out = match ppm {
         Source(s) => {
@@ -483,6 +483,8 @@ pub fn print_after_hir_lowering<'tcx>(
 // Instead, we call that function ourselves.
 fn print_with_analysis(
     tcx: TyCtxt<'_>,
+    src: String,
+    src_name: FileName,
     ppm: PpMode,
     ofile: Option<&Path>,
 ) -> Result<(), ErrorGuaranteed> {
@@ -501,9 +503,9 @@ fn print_with_analysis(
         }
 
         Thir => {
-            let mut out = Vec::new();
-            out.extend(b"// The THIR\n");
-            String::from_utf8(out).unwrap()
+            abort_on_err(rustc_typeck::check_crate(tcx), tcx.sess);
+            let sm = tcx.sess.source_map();
+            rustc_thir_pretty::write_thir_pretty(tcx, sm, src_name, src)
         }
 
         ThirTree => {

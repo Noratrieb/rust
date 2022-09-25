@@ -30,6 +30,7 @@ rustc_error_codes = { path = "../rustc_error_codes" }
 rustc_interface = { path = "../rustc_interface" }
 rustc_ast = { path = "../rustc_ast" }
 rustc_span = { path = "../rustc_span" }
+rustc_thir_pretty = { path = "../rustc_thir_pretty" }
 rustc_typeck = { path = "../rustc_typeck" }
 
 [target.'cfg(unix)'.dependencies]

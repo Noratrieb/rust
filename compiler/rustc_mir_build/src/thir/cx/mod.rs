@@ -62,6 +62,13 @@ pub(crate) fn thir_tree<'tcx>(
     }
 }
 
+pub(crate) fn thir_body_clone<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    owner_def: ty::WithOptConstParam<LocalDefId>,
+) -> Result<Thir<'tcx>, ErrorGuaranteed> {
+    thir_body(tcx, owner_def).map(|(thir, _)| thir.borrow().clone())
+}
+
 struct Cx<'tcx> {
     tcx: TyCtxt<'tcx>,
     thir: Thir<'tcx>,

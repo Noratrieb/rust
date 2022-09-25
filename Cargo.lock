@@ -3408,6 +3408,7 @@ dependencies = [
  "rustc_session",
  "rustc_span",
  "rustc_target",
+ "rustc_thir_pretty",
  "rustc_typeck",
  "serde_json",
  "tracing",
@@ -4117,6 +4118,18 @@ dependencies = [
  "rustc_span",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "rustc_thir_pretty"
+version = "0.1.0"
+dependencies = [
+ "rustc_ast",
+ "rustc_ast_pretty",
+ "rustc_hir",
+ "rustc_middle",
+ "rustc_span",
+ "rustc_target",
 ]
 
 [[package]]
