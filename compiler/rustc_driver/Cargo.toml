@@ -31,6 +31,7 @@ rustc_interface = { path = "../rustc_interface" }
 rustc_ast = { path = "../rustc_ast" }
 rustc_span = { path = "../rustc_span" }
 rustc_hir_analysis = { path = "../rustc_hir_analysis" }
+rustc_pretty = { version = "0.1.0", path = "../rustc_pretty" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
