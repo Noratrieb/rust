@@ -6,3 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+rustc_ast = { version = "0.0.0", path = "../rustc_ast" }
+rustc_hir = { version = "0.0.0", path = "../rustc_hir" }
+rustc_span = { version = "0.0.0", path = "../rustc_span" }

@@ -3949,6 +3949,11 @@ dependencies = [
 [[package]]
 name = "rustc_pretty"
 version = "0.1.0"
+dependencies = [
+ "rustc_ast",
+ "rustc_hir",
+ "rustc_span",
+]
 
 [[package]]
 name = "rustc_privacy"
