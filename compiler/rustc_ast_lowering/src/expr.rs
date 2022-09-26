@@ -14,10 +14,22 @@ use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_hir as hir;
 use rustc_hir::def::Res;
 use rustc_hir::definitions::DefPathData;
+use rustc_middle::span_bug;
 use rustc_span::source_map::{respan, DesugaringKind, Span, Spanned};
 use rustc_span::symbol::{sym, Ident};
 use rustc_span::DUMMY_SP;
-use thin_vec::thin_vec;
+use smallvec::SmallVec;
+use thin_vec::{thin_vec, ThinVec};
+
+/// Used for `manage_let_cond`
+enum LetCheckResult {
+    /// Needs a let chain desugaring
+    DesugarLetChain,
+    /// Is an if/while-let, do nothing
+    Forward,
+    /// Needs a temporary block around the condition
+    NeedsTempBlock,
+}
 
 impl<'hir> LoweringContext<'_, 'hir> {
     fn lower_exprs(&mut self, exprs: &[AstP<Expr>]) -> &'hir [hir::Expr<'hir>] {
@@ -387,33 +399,207 @@ impl<'hir> LoweringContext<'_, 'hir> {
         then: &Block,
         else_opt: Option<&Expr>,
     ) -> hir::ExprKind<'hir> {
-        let lowered_cond = self.lower_expr(cond);
-        let new_cond = self.manage_let_cond(lowered_cond);
-        let then_expr = self.lower_block_expr(then);
+        // Important: We must lower the condition _before_ the then_expr to avoid path resolution problems
+        let (then_expr, new_cond) = match self.manage_let_cond(cond) {
+            LetCheckResult::DesugarLetChain => {
+                return self.lower_if_let_chain(cond, then, else_opt, self.lower_span(cond.span));
+            }
+            LetCheckResult::Forward => {
+                let expr = self.lower_expr(cond);
+                let then_expr = self.arena.alloc(self.lower_block_expr(then));
+                (then_expr, expr)
+            }
+            LetCheckResult::NeedsTempBlock => {
+                let lowered_cond = self.lower_expr(cond);
+                let then_expr = self.arena.alloc(self.lower_block_expr(then));
+                (then_expr, self.wrap_cond_temp_block(lowered_cond))
+            }
+        };
+
         if let Some(rslt) = else_opt {
-            hir::ExprKind::If(new_cond, self.arena.alloc(then_expr), Some(self.lower_expr(rslt)))
+            hir::ExprKind::If(new_cond, then_expr, Some(self.lower_expr(rslt)))
         } else {
-            hir::ExprKind::If(new_cond, self.arena.alloc(then_expr), None)
+            hir::ExprKind::If(new_cond, then_expr, None)
         }
     }
 
-    // If `cond` kind is `let`, returns `let`. Otherwise, wraps and returns `cond`
-    // in a temporary block.
-    fn manage_let_cond(&mut self, cond: &'hir hir::Expr<'hir>) -> &'hir hir::Expr<'hir> {
-        fn has_let_expr<'hir>(expr: &'hir hir::Expr<'hir>) -> bool {
-            match expr.kind {
-                hir::ExprKind::Binary(_, lhs, rhs) => has_let_expr(lhs) || has_let_expr(rhs),
-                hir::ExprKind::Let(..) => true,
-                _ => false,
+    /// Lower let_chains to their equivalent desugaring in terms of label_break_value as specified in the RFC
+    /// ```
+    /// if let Some(_) = Some(5) && let None = None {
+    ///     "uwu";
+    /// } else {
+    ///     "owo";
+    /// }
+    /// ```
+    /// gets turned into
+    /// ```
+    /// '_label: {
+    ///     if let Some(_) = Some(5) {
+    ///         if let None = None {
+    ///             break '_label { "uwu"; }
+    ///         }
+    ///     }
+    ///     { "owo" }
+    /// }
+    /// ```
+    ///
+    /// While let_chains are a chain, their AST representation is a tree like this:
+    /// ```
+    /// if let 1 = 1 && let 2 = 2 && true {}
+    /// ```
+    /// ```text
+    ///            &&
+    ///           /  \
+    ///  let 1 = 1   &&
+    ///             /  \
+    ///     let 2 = 2  true
+    /// ```
+    /// This allows us to fold the tree up from the right into our nested `if` and `if let`.
+    ///
+    /// This is done in two steps to make sure that all conditions are lowered before the body.
+    /// First, we aggregate all the chained conditions in a `Vec<&Expr>`, like
+    /// `[true, let 2 = 2, let 1 = 2]`. These are ordered from last to first.
+    /// (`collect_let_chain_conds` sorts the first to last to lower the exprs in the correct order, we reverse
+    /// them afterwards)
+    ///
+    /// We then iterate through them, building up the nested ifs by creating a new one with the condition
+    /// containing the old one as the body.
+    ///
+    /// We actually only need the break if it has an else, for plain ifs we can just use nested
+    /// ifs.
+    #[tracing::instrument(level = "debug", skip(self))]
+    fn lower_if_let_chain(
+        &mut self,
+        cond: &Expr,
+        then: &Block,
+        else_opt: Option<&Expr>,
+        hir_span: Span,
+    ) -> hir::ExprKind<'hir> {
+        self.mark_span_with_reason(DesugaringKind::LetChains, hir_span, None);
+
+        let mut conds = SmallVec::new();
+        self.collect_let_chain_conds(cond, &mut conds);
+        let conds = conds.into_iter().rev();
+
+        let then = self.arena.alloc(self.lower_block_expr(then));
+
+        match else_opt {
+            None => self.fold_let_chain_into_ifs(conds, then, hir_span),
+            Some(else_opt) => {
+                let else_opt = self.lower_expr(else_opt);
+
+                let outer_block_hir_id = self.next_id();
+
+                let success_break = hir::ExprKind::Break(
+                    hir::Destination { label: None, target_id: Ok(outer_block_hir_id) },
+                    Some(then),
+                );
+                let success_break =
+                    self.arena.alloc(self.expr(hir_span, success_break, ThinVec::new()));
+
+                let if_expr = self.fold_let_chain_into_ifs(conds, success_break, hir_span);
+
+                let if_expr = self.expr(hir_span, if_expr, ThinVec::new());
+
+                let stmt = self.stmt_expr(hir_span, if_expr);
+                let stmts = self.arena.alloc_from_iter([stmt]);
+
+                let block = self.arena.alloc(hir::Block {
+                    stmts,
+                    expr: Some(else_opt),
+                    hir_id: outer_block_hir_id,
+                    rules: hir::BlockCheckMode::DefaultBlock,
+                    span: hir_span,
+                    targeted_by_break: true,
+                });
+
+                hir::ExprKind::Block(block, None)
             }
         }
-        if has_let_expr(cond) {
-            cond
-        } else {
-            let reason = DesugaringKind::CondTemporary;
-            let span_block = self.mark_span_with_reason(reason, cond.span, None);
-            self.expr_drop_temps(span_block, cond, AttrVec::new())
+    }
+
+    /// Folds the let chains up into nested ifs. Returns an ExprKind::If
+    ///
+    /// `chain` must be nonempty
+    fn fold_let_chain_into_ifs(
+        &mut self,
+        chain: impl IntoIterator<Item = &'hir hir::Expr<'hir>>,
+        body: &'hir hir::Expr<'hir>,
+        hir_span: Span,
+    ) -> hir::ExprKind<'hir> {
+        enum ExprOrKind<'hir> {
+            Expr(&'hir hir::Expr<'hir>),
+            ExprKind(hir::ExprKind<'hir>),
         }
+
+        let mut body = ExprOrKind::Expr(body);
+
+        for cond in chain {
+            let body_expr = match body {
+                ExprOrKind::ExprKind(body_kind) => {
+                    self.arena.alloc(self.expr(hir_span, body_kind, ThinVec::new()))
+                }
+                ExprOrKind::Expr(expr) => expr,
+            };
+
+            // Wrap the body expr in a block and if
+            let if_body_block = self.expr_block_expr(body_expr);
+            let if_expr_kind = hir::ExprKind::If(cond, if_body_block, None);
+
+            body = ExprOrKind::ExprKind(if_expr_kind);
+        }
+
+        match body {
+            ExprOrKind::Expr(_) => span_bug!(
+                hir_span,
+                "fold_let_chain_into_ifs called without any let chain conditions"
+            ),
+            ExprOrKind::ExprKind(kind) => kind,
+        }
+    }
+
+    fn collect_let_chain_conds(
+        &mut self,
+        cond: &Expr,
+        conds: &mut SmallVec<[&'hir hir::Expr<'hir>; 3]>,
+    ) {
+        match &cond.kind {
+            ExprKind::Binary(Spanned { node: BinOpKind::And, .. }, lhs, rhs)
+                if Self::has_let_expr(lhs) || Self::has_let_expr(rhs) =>
+            {
+                self.collect_let_chain_conds(lhs, conds);
+                self.collect_let_chain_conds(rhs, conds);
+            }
+            _ => {
+                let cond = self.lower_expr(cond);
+                conds.push(cond);
+            }
+        }
+    }
+
+    fn has_let_expr(expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Binary(_, lhs, rhs) => Self::has_let_expr(lhs) || Self::has_let_expr(rhs),
+            ExprKind::Let(..) => true,
+            _ => false,
+        }
+    }
+
+    // Checks how an if/while condition should be handled
+    fn manage_let_cond(&mut self, cond: &Expr) -> LetCheckResult {
+        if let ExprKind::Let(..) = cond.kind {
+            LetCheckResult::Forward
+        } else if Self::has_let_expr(cond) {
+            LetCheckResult::DesugarLetChain
+        } else {
+            LetCheckResult::NeedsTempBlock
+        }
+    }
+
+    fn wrap_cond_temp_block(&mut self, cond: &'hir hir::Expr<'hir>) -> &'hir hir::Expr<'hir> {
+        let reason = DesugaringKind::CondTemporary;
+        let span_block = self.mark_span_with_reason(reason, cond.span, None);
+        self.expr_drop_temps(span_block, cond, AttrVec::new())
     }
 
     // We desugar: `'label: while $cond $body` into:
@@ -439,8 +625,16 @@ impl<'hir> LoweringContext<'_, 'hir> {
         body: &Block,
         opt_label: Option<Label>,
     ) -> hir::ExprKind<'hir> {
-        let lowered_cond = self.with_loop_condition_scope(|t| t.lower_expr(cond));
-        let new_cond = self.manage_let_cond(lowered_cond);
+        let new_cond = match self.manage_let_cond(cond) {
+            // FIXME We don't care about let_chains right now
+            LetCheckResult::Forward | LetCheckResult::DesugarLetChain => {
+                self.with_loop_condition_scope(|t| t.lower_expr(cond))
+            }
+            LetCheckResult::NeedsTempBlock => {
+                let cond = self.with_loop_condition_scope(|t| t.lower_expr(cond));
+                self.wrap_cond_temp_block(cond)
+            }
+        };
         let then = self.lower_block_expr(body);
         let expr_break = self.expr_break(span, AttrVec::new());
         let stmt_break = self.stmt_expr(span, expr_break);
@@ -1831,6 +2025,12 @@ impl<'hir> LoweringContext<'_, 'hir> {
         attrs: AttrVec,
     ) -> hir::Expr<'hir> {
         self.expr(b.span, hir::ExprKind::Block(b, None), attrs)
+    }
+
+    /// Wraps the expr in a block and puts that into a block expr without attrs
+    fn expr_block_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> &'hir hir::Expr<'hir> {
+        let expr = self.block_expr(expr);
+        self.arena.alloc(self.expr_block(expr, ThinVec::new()))
     }
 
     pub(super) fn expr(

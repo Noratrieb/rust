@@ -1148,6 +1148,7 @@ pub enum DesugaringKind {
     Await,
     ForLoop,
     WhileLoop,
+    LetChains,
 }
 
 impl DesugaringKind {
@@ -1163,6 +1164,7 @@ impl DesugaringKind {
             DesugaringKind::OpaqueTy => "`impl Trait`",
             DesugaringKind::ForLoop => "`for` loop",
             DesugaringKind::WhileLoop => "`while` loop",
+            DesugaringKind::LetChains => "`let` chain",
         }
     }
 }
