@@ -8,10 +8,7 @@ pub struct Delimited<I: Iterator> {
 
 pub trait IterDelimited: Iterator + Sized {
     fn delimited(self) -> Delimited<Self> {
-        Delimited {
-            is_first: true,
-            iter: self.peekable(),
-        }
+        Delimited { is_first: true, iter: self.peekable() }
     }
 }
 

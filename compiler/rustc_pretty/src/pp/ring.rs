@@ -9,10 +9,7 @@ pub struct RingBuffer<T> {
 
 impl<T> RingBuffer<T> {
     pub fn new() -> Self {
-        RingBuffer {
-            data: VecDeque::new(),
-            offset: 0,
-        }
+        RingBuffer { data: VecDeque::new(), offset: 0 }
     }
 
     pub fn is_empty(&self) -> bool {

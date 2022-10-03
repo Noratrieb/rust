@@ -3,17 +3,11 @@ use std::borrow::Cow;
 
 impl<T> Printer<T> {
     pub fn ibox(&mut self, indent: isize) {
-        self.scan_begin(BeginToken {
-            offset: indent,
-            breaks: Breaks::Inconsistent,
-        });
+        self.scan_begin(BeginToken { offset: indent, breaks: Breaks::Inconsistent });
     }
 
     pub fn cbox(&mut self, indent: isize) {
-        self.scan_begin(BeginToken {
-            offset: indent,
-            breaks: Breaks::Consistent,
-        });
+        self.scan_begin(BeginToken { offset: indent, breaks: Breaks::Consistent });
     }
 
     pub fn end(&mut self) {
@@ -26,10 +20,7 @@ impl<T> Printer<T> {
     }
 
     fn spaces(&mut self, n: usize) {
-        self.scan_break(BreakToken {
-            blank_space: n,
-            ..BreakToken::default()
-        });
+        self.scan_break(BreakToken { blank_space: n, ..BreakToken::default() });
     }
 
     pub fn zerobreak(&mut self) {
@@ -49,11 +40,7 @@ impl<T> Printer<T> {
     }
 
     pub fn space_if_nonempty(&mut self) {
-        self.scan_break(BreakToken {
-            blank_space: 1,
-            if_nonempty: true,
-            ..BreakToken::default()
-        });
+        self.scan_break(BreakToken { blank_space: 1, if_nonempty: true, ..BreakToken::default() });
     }
 
     pub fn hardbreak_if_nonempty(&mut self) {
@@ -66,10 +53,7 @@ impl<T> Printer<T> {
 
     pub fn trailing_comma(&mut self, is_last: bool) {
         if is_last {
-            self.scan_break(BreakToken {
-                pre_break: Some(','),
-                ..BreakToken::default()
-            });
+            self.scan_break(BreakToken { pre_break: Some(','), ..BreakToken::default() });
         } else {
             self.word(",");
             self.space();
@@ -90,9 +74,6 @@ impl<T> Printer<T> {
     }
 
     pub fn neverbreak(&mut self) {
-        self.scan_break(BreakToken {
-            never_break: true,
-            ..BreakToken::default()
-        });
+        self.scan_break(BreakToken { never_break: true, ..BreakToken::default() });
     }
 }

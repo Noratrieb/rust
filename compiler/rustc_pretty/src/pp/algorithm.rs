@@ -112,10 +112,7 @@ impl<T> Printer<T> {
             self.right_total = 1;
             self.buf.clear();
         }
-        let right = self.buf.push(BufEntry {
-            token: Token::Begin(token),
-            size: -self.right_total,
-        });
+        let right = self.buf.push(BufEntry { token: Token::Begin(token), size: -self.right_total });
         self.scan_stack.push_back(right);
     }
 
@@ -142,10 +139,7 @@ impl<T> Printer<T> {
                     }
                 }
             }
-            let right = self.buf.push(BufEntry {
-                token: Token::End,
-                size: -1,
-            });
+            let right = self.buf.push(BufEntry { token: Token::End, size: -1 });
             self.scan_stack.push_back(right);
         }
     }
@@ -158,10 +152,7 @@ impl<T> Printer<T> {
         } else {
             self.check_stack(0);
         }
-        let right = self.buf.push(BufEntry {
-            token: Token::Break(token),
-            size: -self.right_total,
-        });
+        let right = self.buf.push(BufEntry { token: Token::Break(token), size: -self.right_total });
         self.scan_stack.push_back(right);
         self.right_total += token.blank_space as isize;
     }
@@ -171,10 +162,7 @@ impl<T> Printer<T> {
             self.print_string(string);
         } else {
             let len = string.len() as isize;
-            self.buf.push(BufEntry {
-                token: Token::String(string),
-                size: len,
-            });
+            self.buf.push(BufEntry { token: Token::String(string), size: len });
             self.right_total += len;
             self.check_stream();
         }
@@ -296,19 +284,16 @@ impl<T> Printer<T> {
                 Breaks::Inconsistent => '‹',
             });
             if cfg!(prettyplease_debug_indent) {
-                self.out
-                    .extend(token.offset.to_string().chars().map(|ch| match ch {
-                        '0'..='9' => ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉']
-                            [(ch as u8 - b'0') as usize]
-                            as char,
-                        '-' => '₋',
-                        _ => unreachable!(),
-                    }));
+                self.out.extend(token.offset.to_string().chars().map(|ch| match ch {
+                    '0'..='9' => ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉']
+                        [(ch as u8 - b'0') as usize] as char,
+                    '-' => '₋',
+                    _ => unreachable!(),
+                }));
             }
         }
         if size > self.space {
-            self.print_stack
-                .push(PrintFrame::Broken(self.indent, token.breaks));
+            self.print_stack.push(PrintFrame::Broken(self.indent, token.breaks));
             self.indent = usize::try_from(self.indent as isize + token.offset).unwrap();
         } else {
             self.print_stack.push(PrintFrame::Fits(token.breaks));
@@ -376,8 +361,7 @@ impl<T> Printer<T> {
 
     fn print_indent(&mut self) {
         self.out.reserve(self.pending_indentation);
-        self.out
-            .extend(iter::repeat(' ').take(self.pending_indentation));
+        self.out.extend(iter::repeat(' ').take(self.pending_indentation));
         self.pending_indentation = 0;
     }
 }
