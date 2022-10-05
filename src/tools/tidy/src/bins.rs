@@ -5,7 +5,19 @@
 //! huge amount of bloat to the Git history, so it's good to just ensure we
 //! don't do that again.
 
+use crate::TidyErrors;
+
+struct Bins;
+
+impl TidyCheck for Bins {
+    fn check(path: &std::path::Path, errors: &TidyErrors) {
+        os_impl::check(path, errors);
+    }
+}
+
 pub use os_impl::*;
+
+use crate::TidyCheck;
 
 // All files are executable on Windows, so just check on Unix.
 #[cfg(windows)]
@@ -16,12 +28,13 @@ mod os_impl {
         return false;
     }
 
-    pub fn check(_path: &Path, _bad: &mut bool) {}
+    fn check(path: &Path, errors: &crate::TidyErrors) {}
 }
 
 #[cfg(unix)]
 mod os_impl {
     use crate::walk::{filter_dirs, walk_no_read};
+    use crate::TidyErrors;
     use std::fs;
     use std::os::unix::prelude::*;
     use std::path::Path;
@@ -95,8 +108,7 @@ mod os_impl {
         return true;
     }
 
-    #[cfg(unix)]
-    pub fn check(path: &Path, bad: &mut bool) {
+    pub fn check(path: &Path, errors: &TidyErrors) {
         use std::ffi::OsStr;
 
         const ALLOWED: &[&str] = &["configure", "x"];
@@ -145,7 +157,7 @@ mod os_impl {
                         });
                     let path_bytes = rel_path.as_os_str().as_bytes();
                     if output.status.success() && output.stdout.starts_with(path_bytes) {
-                        tidy_error!(bad, "binary checked into source: {}", file.display());
+                        errors.file_error(file, "binary checked into source");
                     }
                 }
             },

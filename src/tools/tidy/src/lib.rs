@@ -38,6 +38,64 @@ macro_rules! tidy_error {
     });
 }
 
+trait TidyCheck {
+    fn check(path: &std::path::Path, errors: &TidyErrors);
+}
+
+pub type LineNumber = usize;
+
+pub use tidy_errors::TidyErrors;
+
+mod tidy_errors {
+    use std::sync::atomic::Ordering;
+    use std::{fmt::Display, path::PathBuf, sync::atomic::AtomicBool};
+
+    use crate::LineNumber;
+
+    struct TidyError {
+        file: PathBuf,
+        line: Option<LineNumber>,
+        msg: String,
+    }
+
+    impl Display for TidyError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.file.display())?;
+            if let Some(line) = self.line {
+                write!(f, ":{}", line)?;
+            }
+            write!(f, ":{}", self.msg)
+        }
+    }
+
+    pub struct TidyErrors {
+        has_error: AtomicBool,
+    }
+
+    impl TidyErrors {
+        pub fn new() -> Self {
+            Self { has_error: AtomicBool::new(false) }
+        }
+
+        pub fn has_errors(&self) -> bool {
+            self.has_error.load(Ordering::Relaxed)
+        }
+
+        pub fn file_error(&self, file: impl Into<PathBuf>, msg: impl Into<String>) {
+            self.raw_error(TidyError { file: file.into(), line: None, msg: msg.into() });
+        }
+
+        pub fn error(&self, file: impl Into<PathBuf>, line: LineNumber, msg: impl Into<String>) {
+            self.raw_error(TidyError { file: file.into(), line: Some(line), msg: msg.into() });
+        }
+
+        fn raw_error(&self, error: TidyError) {
+            eprintln!("{error}");
+            self.has_error.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
 pub mod bins;
 pub mod debug_artifacts;
 pub mod deps;

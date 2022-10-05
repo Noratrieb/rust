@@ -55,6 +55,23 @@ fn main() {
             }
         }
 
+        macro_rules! check2 {
+            ($p:ident $(, $args:expr)* ) => {
+                while handles.len() >= concurrency.get() {
+                    handles.pop_front().unwrap().join().unwrap();
+                }
+
+                let handle = s.spawn(|| {
+                    let errors = TidyErrors::new();
+                    $p::check($($args),* , &errors);
+                    if (errors.has_errors()) {
+                        bad.store(true, Ordering::Relaxed);
+                    }
+                });
+                handles.push_back(handle);
+            }
+        }
+
         check!(target_specific_tests, &src_path);
 
         // Checks that are done on the cargo workspace.
@@ -62,7 +79,7 @@ fn main() {
         check!(extdeps, &root_path);
 
         // Checks over tests.
-        check!(debug_artifacts, &src_path);
+        check2!(debug_artifacts, &src_path);
         check!(ui_tests, &src_path);
 
         // Checks that only make sense for the compiler.
@@ -79,7 +96,7 @@ fn main() {
         check!(unit_tests, &library_path);
 
         if bins::check_filesystem_support(&[&root_path], &output_directory) {
-            check!(bins, &root_path);
+            check2!(bins, &root_path);
         }
 
         check!(style, &src_path);
