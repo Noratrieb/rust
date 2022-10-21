@@ -1,6 +1,6 @@
 use crate::diagnostics::{ImportSuggestion, LabelSuggestion, TypoSuggestion};
+use crate::late::{lifetimes::LifetimeUseSet, LifetimeBinderKind, LifetimeRes, LifetimeRibKind};
 use crate::late::{AliasPossibility, LateResolutionVisitor, RibKind};
-use crate::late::{LifetimeBinderKind, LifetimeRes, LifetimeRibKind, LifetimeUseSet};
 use crate::path_names_to_string;
 use crate::{Module, ModuleKind, ModuleOrUniformRoot};
 use crate::{PathResult, PathSource, Segment};
