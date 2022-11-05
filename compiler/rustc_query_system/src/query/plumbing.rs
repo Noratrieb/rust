@@ -468,6 +468,22 @@ where
     (result, dep_node_index)
 }
 
+trait FancySpecDisplay {
+    fn to_string(&self) -> String;
+}
+
+impl<T> FancySpecDisplay for T {
+    default fn to_string(&self) -> String {
+        "<no impl>".into()
+    }
+}
+
+impl<T: std::fmt::Debug> FancySpecDisplay for T {
+    fn to_string(&self) -> String {
+        format!("{self:?}")    
+    }
+}
+
 fn try_load_from_disk_and_cache_in_memory<CTX, K, V>(
     tcx: CTX,
     key: &K,
@@ -483,7 +499,22 @@ where
     // We must ensure that this is handled correctly.
 
     let dep_graph = tcx.dep_context().dep_graph();
-    let (prev_dep_node_index, dep_node_index) = dep_graph.try_mark_green(tcx, &dep_node)?;
+    let Some((prev_dep_node_index, dep_node_index)) = dep_graph.try_mark_green(tcx, &dep_node) else {
+        static FILE: parking_lot::Mutex<Option<std::fs::File>> = parking_lot::Mutex::new(None);
+        let mut file = FILE.lock();
+        let Ok(path) = std::env::var("RUSTC_RED_NODES_PATH") else {return None};
+        if file.is_none() {
+            *file =
+                Some(std::fs::OpenOptions::new().append(true).create(true).open(path).unwrap());
+        }
+
+        use std::io::Write;
+        let key_string = FancySpecDisplay::to_string(&key);
+        writeln!(file.as_ref().unwrap(), "{:?}({key_string})", dep_node.kind);
+        return None;
+    };
+
+    
 
     debug_assert!(dep_graph.is_green(dep_node));
 
