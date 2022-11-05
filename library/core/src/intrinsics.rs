@@ -2170,10 +2170,18 @@ extern "rust-intrinsic" {
     /// which violates the principle that a `const fn` must behave the same at
     /// compile-time and at run-time. The unsafe code in crate B is fine.
     #[rustc_const_unstable(feature = "const_eval_select", issue = "none")]
+    #[cfg(bootstrap)]
     pub fn const_eval_select<ARG, F, G, RET>(arg: ARG, called_in_const: F, called_at_rt: G) -> RET
     where
         G: FnOnce<ARG, Output = RET>,
         F: FnOnce<ARG, Output = RET>;
+
+    #[cfg(not(bootstrap))]
+    #[rustc_const_unstable(feature = "const_eval_select", issue = "none")]
+    pub fn const_eval_select<ARG, F, G, RET>(arg: ARG, called_in_const: F, called_at_rt: G) -> RET
+    where
+        G: FnOnce<ARG, Output<'static> = RET>,
+        F: FnOnce<ARG, Output<'static> = RET>;
 }
 
 // Some functions are defined here because they accidentally got made

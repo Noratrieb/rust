@@ -42,6 +42,7 @@ impl<'a, CapturedData: ?Sized, Function> ConstFnMutClosure<&'a mut CapturedData,
     }
 }
 
+#[cfg(bootstrap)]
 macro_rules! impl_fn_mut_tuple {
     ($($var:ident)*) => {
         #[allow(unused_parens)]
@@ -63,6 +64,35 @@ macro_rules! impl_fn_mut_tuple {
             Function: ~const Fn(($(&mut $var),*), ClosureArguments)-> ClosureReturnValue,
         {
             extern "rust-call" fn call_mut(&mut self, args: ClosureArguments) -> Self::Output {
+                #[allow(non_snake_case)]
+                let ($($var),*) = &mut self.data;
+                (self.func)(($($var),*), args)
+            }
+        }
+    };
+}
+#[cfg(not(bootstrap))]
+macro_rules! impl_fn_mut_tuple {
+    ($($var:ident)*) => {
+        #[allow(unused_parens)]
+        impl<'a, $($var,)* ClosureArguments, Function, ClosureReturnValue> const
+            FnOnce<ClosureArguments> for ConstFnMutClosure<($(&'a mut $var),*), Function>
+        where
+            Function: ~const Fn(($(&mut $var),*), ClosureArguments) -> ClosureReturnValue+ ~const Destruct,
+        {
+            type Output<'captures> = ClosureReturnValue;
+
+            extern "rust-call" fn call_once(mut self, args: ClosureArguments) -> Self::Output<'static> {
+            self.call_mut(args)
+            }
+        }
+        #[allow(unused_parens)]
+        impl<'a, $($var,)* ClosureArguments, Function, ClosureReturnValue> const
+            FnMut<ClosureArguments> for ConstFnMutClosure<($(&'a mut $var),*), Function>
+        where
+            Function: ~const Fn(($(&mut $var),*), ClosureArguments)-> ClosureReturnValue,
+        {
+            extern "rust-call" fn call_mut(&mut self, args: ClosureArguments) -> Self::Output<'_> {
                 #[allow(non_snake_case)]
                 let ($($var),*) = &mut self.data;
                 (self.func)(($($var),*), args)
