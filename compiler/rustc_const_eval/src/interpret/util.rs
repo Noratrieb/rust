@@ -1,6 +1,7 @@
 use rustc_middle::mir::interpret::InterpResult;
-use rustc_middle::ty::{self, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitor};
-use std::convert::TryInto;
+use rustc_middle::ty::{
+    self, GenericUsage, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitor,
+};
 use std::ops::ControlFlow;
 
 /// Checks whether a type contains generic parameters which require substitution.
@@ -38,10 +39,7 @@ where
                     let instance = ty::InstanceDef::Item(ty::WithOptConstParam::unknown(def_id));
                     let unused_params = self.tcx.unused_generic_params(instance);
                     for (index, subst) in substs.into_iter().enumerate() {
-                        let index = index
-                            .try_into()
-                            .expect("more generic parameters than can fit into a `u32`");
-                        let is_used = unused_params.contains(index).map_or(true, |unused| !unused);
+                        let is_used = unused_params.get(index).map_or(true, GenericUsage::is_used);
                         // Only recurse when generic parameters in fns, closures and generators
                         // are used and require substitution.
                         // Just in case there are closures or generators within this subst,

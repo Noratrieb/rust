@@ -29,6 +29,7 @@ use crate::traits::query::{
 use crate::traits::specialization_graph;
 use crate::traits::{self, ImplSource};
 use crate::ty::fast_reject::SimplifiedType;
+use crate::ty::instance::GenericUsage;
 use crate::ty::layout::TyAndLayout;
 use crate::ty::subst::{GenericArg, SubstsRef};
 use crate::ty::util::AlwaysRequiresDrop;
@@ -49,7 +50,7 @@ use rustc_hir::def_id::{CrateNum, DefId, DefIdMap, DefIdSet, LocalDefId};
 use rustc_hir::hir_id::OwnerId;
 use rustc_hir::lang_items::{LangItem, LanguageItems};
 use rustc_hir::{Crate, ItemLocalId, TraitCandidate};
-use rustc_index::{bit_set::FiniteBitSet, vec::IndexVec};
+use rustc_index::vec::IndexVec;
 use rustc_session::config::{EntryFnType, OptLevel, OutputFilenames, SymbolManglingVersion};
 use rustc_session::cstore::{CrateDepKind, CrateSource};
 use rustc_session::cstore::{ExternCrate, ForeignModule, LinkagePreference, NativeLib};

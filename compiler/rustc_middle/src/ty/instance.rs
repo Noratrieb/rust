@@ -619,25 +619,54 @@ impl<'tcx> Instance<'tcx> {
     /// Returns a new `Instance` where generic parameters in `instance.substs` are replaced by
     /// identity parameters if they are determined to be unused in `instance.def`.
     pub fn polymorphize(self, tcx: TyCtxt<'tcx>) -> Self {
-        debug!("polymorphize: running polymorphization analysis");
         if !tcx.sess.opts.unstable_opts.polymorphize {
             return self;
         }
 
         let polymorphized_substs = polymorphize(tcx, self.def, self.substs);
-        debug!("polymorphize: self={:?} polymorphized_substs={:?}", self, polymorphized_substs);
         Self { def: self.def, substs: polymorphized_substs }
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Debug, TyDecodable, TyEncodable, HashStable)]
+pub enum GenericUsage {
+    Unused,
+    SizeOf,
+    FullyUsed,
+}
+
+impl GenericUsage {
+    pub fn is_unused(&self) -> bool {
+        matches!(self, Self::Unused)
+    }
+
+    pub fn is_used(&self) -> bool {
+        !self.is_unused()
+    }
+
+    pub fn is_not_fully_used(&self) -> bool {
+        !matches!(self, Self::FullyUsed)
+    }
+
+    pub fn upgrade(&mut self, to: Self) {
+        use GenericUsage::*;
+
+        match (*self, to) {
+            (Unused, _) => *self = to,
+            (SizeOf, FullyUsed) => *self = to,
+            _ => {}
+        }
+    }
+}
+
+#[instrument(level = "debug", skip(tcx), ret)]
 fn polymorphize<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: ty::InstanceDef<'tcx>,
     substs: SubstsRef<'tcx>,
 ) -> SubstsRef<'tcx> {
-    debug!("polymorphize({:?}, {:?})", instance, substs);
     let unused = tcx.unused_generic_params(instance);
-    debug!("polymorphize: unused={:?}", unused);
+    debug!(?unused, "Unused substs");
 
     // If this is a closure or generator then we need to handle the case where another closure
     // from the function is captured as an upvar and hasn't been polymorphized. In this case,
@@ -696,7 +725,9 @@ fn polymorphize<'tcx>(
     }
 
     InternalSubsts::for_item(tcx, def_id, |param, _| {
-        let is_unused = unused.contains(param.index).unwrap_or(false);
+        let is_unused = unused.get(param.index as usize).map_or(false, GenericUsage::is_unused);
+        let is_size_of = unused.get(param.index as usize) == Some(&GenericUsage::SizeOf);
+
         debug!("polymorphize: param={:?} is_unused={:?}", param, is_unused);
         match param.kind {
             // Upvar case: If parameter is a type parameter..
@@ -715,12 +746,26 @@ fn polymorphize<'tcx>(
                     ty::GenericArg::from(polymorphized_upvars_ty)
                 },
 
+            ty::GenericParamDefKind::Type { .. } if is_size_of => {
+                // this hack is very evil (doesn't work)
+                let ty = substs[param.index as usize].expect_ty();
+                let param_env_ty = ty::ParamEnv::reveal_all().and(ty);
+                let layout = tcx.layout_of(param_env_ty);
+                match layout {
+                    Ok(layout) => {
+                        ty::Const::from_usize(tcx, layout.size.bytes()).into()
+                    }
+                    Err(_) => substs[param.index as usize]
+                }
+            }
+
             // Simple case: If parameter is a const or type parameter..
             ty::GenericParamDefKind::Const { .. } | ty::GenericParamDefKind::Type { .. } if
                 // ..and is within range and unused..
-                unused.contains(param.index).unwrap_or(false) =>
+                is_unused =>
                     // ..then use the identity for this parameter.
                     tcx.mk_param_from_def(param),
+
 
             // Otherwise, use the parameter as before.
             _ => substs[param.index as usize],

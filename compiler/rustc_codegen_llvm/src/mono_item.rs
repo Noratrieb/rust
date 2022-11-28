@@ -41,6 +41,7 @@ impl<'tcx> PreDefineMethods<'tcx> for CodegenCx<'_, 'tcx> {
         self.instances.borrow_mut().insert(instance, g);
     }
 
+    #[instrument(skip(self), level = "debug")]
     fn predefine_fn(
         &self,
         instance: Instance<'tcx>,

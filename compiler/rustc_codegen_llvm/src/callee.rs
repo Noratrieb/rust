@@ -22,24 +22,23 @@ use rustc_middle::ty::{self, Instance, TypeVisitable};
 ///
 /// - `cx`: the crate context
 /// - `instance`: the instance to be instantiated
+#[instrument(skip(cx))]
 pub fn get_fn<'ll, 'tcx>(cx: &CodegenCx<'ll, 'tcx>, instance: Instance<'tcx>) -> &'ll Value {
     let tcx = cx.tcx();
-
-    debug!("get_fn(instance={:?})", instance);
 
     assert!(!instance.substs.needs_infer());
     assert!(!instance.substs.has_escaping_bound_vars());
 
     if let Some(&llfn) = cx.instances.borrow().get(&instance) {
+        debug!("cache hit!");
         return llfn;
     }
 
     let sym = tcx.symbol_name(instance).name;
     debug!(
-        "get_fn({:?}: {:?}) => {}",
-        instance,
-        instance.ty(cx.tcx(), ty::ParamEnv::reveal_all()),
-        sym
+        ?sym,
+        ty = ?instance.ty(cx.tcx(), ty::ParamEnv::reveal_all()),
+        "getting function"
     );
 
     let fn_abi = cx.fn_abi_of_instance(instance, ty::List::empty());

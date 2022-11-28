@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use rustc_errors::ErrorGuaranteed;
 use rustc_errors::IntoDiagnostic;
 use rustc_macros::{Diagnostic, LintDiagnostic};
+use rustc_middle::ty::GenericUsage;
 use rustc_span::Span;
 
 #[derive(Diagnostic)]
@@ -35,7 +36,7 @@ pub struct TypeLengthLimit {
 pub struct UnusedGenericParams {
     pub span: Span,
     pub param_spans: Vec<Span>,
-    pub param_names: Vec<String>,
+    pub param_names: Vec<(String, GenericUsage)>,
 }
 
 impl IntoDiagnostic<'_> for UnusedGenericParams {
@@ -46,11 +47,11 @@ impl IntoDiagnostic<'_> for UnusedGenericParams {
     ) -> rustc_errors::DiagnosticBuilder<'_, ErrorGuaranteed> {
         let mut diag = handler.struct_err(rustc_errors::fluent::monomorphize_unused_generic_params);
         diag.set_span(self.span);
-        for (span, name) in self.param_spans.into_iter().zip(self.param_names) {
+        for (span, (name, usage)) in self.param_spans.into_iter().zip(self.param_names) {
             // FIXME: I can figure out how to do a label with a fluent string with a fixed message,
             // or a label with a dynamic value in a hard-coded string, but I haven't figured out
             // how to combine the two. 😢
-            diag.span_label(span, format!("generic parameter `{}` is unused", name));
+            diag.span_label(span, format!("generic parameter `{}` is {usage:?}", name));
         }
         diag
     }
