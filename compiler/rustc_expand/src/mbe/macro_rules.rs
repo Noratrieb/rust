@@ -271,6 +271,32 @@ pub(super) enum CanRetry {
     No(ErrorGuaranteed),
 }
 
+pub(crate) trait Matcher {
+    fn try_match_arm(&mut self, lhs: &[MatcherLoc]) -> NamedParseResult;
+}
+
+struct DefaultMatcher<'a> {
+    sess: &'a ParseSess,
+    name: Ident,
+    tt_parser: TtParser,
+    parser: Parser<'a>,
+}
+
+impl<'a> DefaultMatcher<'a> {
+    fn new(sess: &'a ParseSess, name: Ident, arg: &TokenStream) -> Self {
+        let parser = parser_from_cx(sess, arg.clone(), Recovery::Forbidden);
+        let tt_parser = TtParser::new(name);
+        Self { sess, name, tt_parser, parser }
+    }
+}
+
+impl Matcher for DefaultMatcher<'_> {
+    fn try_match_arm(&mut self, lhs: &[MatcherLoc]) -> NamedParseResult {
+        let mut gated_spans_snapshot = mem::take(&mut *self.sess.gated_spans.spans.borrow_mut());
+        self.tt_parser.parse_tt(&mut Cow::Borrowed(&self.parser), lhs, &mut NoopTracker)
+    }
+}
+
 /// Try expanding the macro. Returns the index of the successful arm and its named_matches if it was successful,
 /// and nothing if it failed. On failure, it's the callers job to use `track` accordingly to record all errors
 /// correctly.

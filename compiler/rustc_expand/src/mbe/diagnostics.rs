@@ -100,6 +100,13 @@ struct CollectTrackerAndEmitter<'a, 'cx, 'matcher> {
     result: Option<Box<dyn MacResult + 'cx>>,
 }
 
+impl super::macro_rules::Matcher for CollectTrackerAndEmitter<'_, '_, '_> {
+    fn try_match_arm(&mut self, lhs: &[MatcherLoc]) -> NamedParseResult {
+        let mut gated_spans_snapshot = mem::take(&mut *self.sess.gated_spans.spans.borrow_mut());
+        self.tt_parser.parse_tt(&mut Cow::Borrowed(&self.parser), lhs, &mut NoopTracker)
+    }
+}
+
 impl<'a, 'cx, 'matcher> Tracker<'matcher> for CollectTrackerAndEmitter<'a, 'cx, 'matcher> {
     fn before_match_loc(&mut self, parser: &TtParser, matcher: &'matcher MatcherLoc) {
         if self.remaining_matcher.is_none()
@@ -138,6 +145,7 @@ impl<'a, 'cx, 'matcher> Tracker<'matcher> for CollectTrackerAndEmitter<'a, 'cx, 
             }
             ErrorReported(_) => self.result = Some(DummyResult::any(self.root_span)),
         }
+        result
     }
 
     fn description() -> &'static str {
