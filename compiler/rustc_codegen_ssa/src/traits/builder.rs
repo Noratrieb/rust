@@ -15,7 +15,7 @@ use crate::mir::place::PlaceRef;
 use crate::MemFlags;
 
 use rustc_middle::ty::layout::{HasParamEnv, TyAndLayout};
-use rustc_middle::ty::Ty;
+use rustc_middle::ty::{PolyCache, Ty};
 use rustc_span::Span;
 use rustc_target::abi::call::FnAbi;
 use rustc_target::abi::{Abi, Align, Scalar, Size, WrappingRange};
@@ -46,6 +46,8 @@ pub trait BuilderMethods<'a, 'tcx>:
     fn llbb(&self) -> Self::BasicBlock;
 
     fn set_span(&mut self, span: Span);
+
+    fn polymorphization_cache(&self) -> std::cell::RefMut<'_, PolyCache<'tcx>>;
 
     // FIXME(eddyb) replace uses of this with `append_sibling_block`.
     fn append_block(cx: &'a Self::CodegenCx, llfn: Self::Function, name: &str) -> Self::BasicBlock;

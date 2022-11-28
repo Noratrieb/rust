@@ -257,10 +257,14 @@ impl<'ll, 'tcx> ConstMethods<'tcx> for CodegenCx<'ll, 'tcx> {
                         }
                         (value, AddressSpace::DATA)
                     }
-                    GlobalAlloc::Function(fn_instance) => (
-                        self.get_fn_addr(fn_instance.polymorphize(self.tcx)),
-                        self.data_layout().instruction_address_space,
-                    ),
+                    GlobalAlloc::Function(fn_instance) => {
+                        let fn_instance =
+                            fn_instance.polymorphize(self.tcx, &mut self.poly_cache.borrow_mut());
+                        (
+                            self.get_fn_addr(fn_instance),
+                            self.data_layout().instruction_address_space,
+                        )
+                    }
                     GlobalAlloc::VTable(ty, trait_ref) => {
                         let alloc = self
                             .tcx

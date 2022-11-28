@@ -756,7 +756,7 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                     ty::Instance::resolve(bx.tcx(), ty::ParamEnv::reveal_all(), def_id, substs)
                         .unwrap()
                         .unwrap()
-                        .polymorphize(bx.tcx()),
+                        .polymorphize(bx.tcx(), &mut bx.polymorphization_cache()),
                 ),
                 None,
             ),

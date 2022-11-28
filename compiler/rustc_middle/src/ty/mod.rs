@@ -85,7 +85,7 @@ pub use self::context::{
     GeneratorInteriorTypeCause, GlobalCtxt, Lift, OnDiskCache, TyCtxt, TypeckResults, UserType,
     UserTypeAnnotationIndex,
 };
-pub use self::instance::{GenericUsage, Instance, InstanceDef, ShortInstance};
+pub use self::instance::{GenericUsage, Instance, InstanceDef, PolyCache, ShortInstance};
 pub use self::list::List;
 pub use self::parameterized::ParameterizedOverTcx;
 pub use self::rvalue_scopes::RvalueScopes;

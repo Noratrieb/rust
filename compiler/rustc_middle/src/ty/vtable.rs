@@ -94,7 +94,7 @@ pub(super) fn vtable_allocation_provider<'tcx>(
             VtblEntry::Vacant => continue,
             VtblEntry::Method(instance) => {
                 // Prepare the fn ptr we write into the vtable.
-                let instance = instance.polymorphize(tcx);
+                let instance = instance.polymorphize_no_cache(tcx);
                 let fn_alloc_id = tcx.create_fn_alloc(instance);
                 let fn_ptr = Pointer::from(fn_alloc_id);
                 Scalar::from_pointer(fn_ptr, &tcx)

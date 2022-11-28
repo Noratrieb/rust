@@ -21,7 +21,7 @@ use rustc_middle::ty::layout::{
     FnAbiError, FnAbiOfHelpers, FnAbiRequest, HasParamEnv, LayoutError, LayoutOfHelpers,
     TyAndLayout,
 };
-use rustc_middle::ty::{self, Instance, Ty, TyCtxt};
+use rustc_middle::ty::{self, Instance, PolyCache, Ty, TyCtxt};
 use rustc_middle::{bug, span_bug};
 use rustc_session::config::{BranchProtection, CFGuard, CFProtection};
 use rustc_session::config::{CrateType, DebugInfo, PAuthKey, PacRet};
@@ -113,6 +113,9 @@ pub struct CodegenCx<'ll, 'tcx> {
     /// `global_asm!` needs to be able to find this new global so that it can
     /// compute the correct mangled symbol name to insert into the asm.
     pub renamed_statics: RefCell<FxHashMap<DefId, &'ll Value>>,
+
+    /// A cache for the canonical types for polymorphic functions.
+    pub poly_cache: RefCell<PolyCache<'tcx>>,
 }
 
 pub struct TypeLowering<'ll> {
@@ -452,6 +455,7 @@ impl<'ll, 'tcx> CodegenCx<'ll, 'tcx> {
             intrinsics: Default::default(),
             local_gen_sym_counter: Cell::new(0),
             renamed_statics: Default::default(),
+            poly_cache: Default::default(),
         }
     }
 

@@ -29,6 +29,10 @@ pub fn get_fn<'ll, 'tcx>(cx: &CodegenCx<'ll, 'tcx>, instance: Instance<'tcx>) ->
     assert!(!instance.substs.needs_infer());
     assert!(!instance.substs.has_escaping_bound_vars());
 
+    let mut poly_cache = cx.poly_cache.borrow_mut();
+    let instance = instance.polymorphize(tcx, &mut *poly_cache);
+    drop(poly_cache);
+
     if let Some(&llfn) = cx.instances.borrow().get(&instance) {
         debug!("cache hit!");
         return llfn;

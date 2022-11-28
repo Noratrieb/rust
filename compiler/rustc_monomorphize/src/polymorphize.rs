@@ -62,7 +62,7 @@ fn unused_generic_params<'tcx>(
     // Create a bitset with N rightmost ones for each parameter.
     let generics_count = generics.count();
     let unused_parameters =
-        tcx.arena.alloc_from_iter(iter::repeat(GenericUsage::Unused).take(generics_count));
+        tcx.arena.alloc_from_iter(iter::repeat(GenericUsage::unused()).take(generics_count));
 
     debug!(?unused_parameters, "(start)");
 
@@ -145,7 +145,7 @@ fn mark_used_by_default_parameters<'tcx>(
         DefKind::Closure | DefKind::Generator => {
             for param in &generics.params {
                 debug!(?param, "(closure/gen)");
-                unused_parameters[param.index as usize].upgrade(GenericUsage::FullyUsed);
+                unused_parameters[param.index as usize].upgrade(GenericUsage::FULLY_USED);
             }
         }
         DefKind::Mod
@@ -181,7 +181,7 @@ fn mark_used_by_default_parameters<'tcx>(
             for param in &generics.params {
                 debug!(?param, "(other)");
                 if let ty::GenericParamDefKind::Lifetime = param.kind {
-                    unused_parameters[param.index as usize].upgrade(GenericUsage::FullyUsed);
+                    unused_parameters[param.index as usize].upgrade(GenericUsage::FULLY_USED);
                 }
             }
         }
@@ -307,7 +307,14 @@ impl<'a, 'tcx> Visitor<'tcx> for MarkUsedGenericParams<'a, 'tcx> {
             mir::Rvalue::NullaryOp(mir::NullOp::SizeOf, ty) => match *ty.kind() {
                 ty::Param(param) => {
                     let idx = param.index as usize;
-                    self.unused_parameters[idx].upgrade(GenericUsage::SizeOf);
+                    self.unused_parameters[idx].upgrade(GenericUsage::SIZE_OF);
+                }
+                _ => self.super_rvalue(rvalue, location),
+            },
+            mir::Rvalue::NullaryOp(mir::NullOp::AlignOf, ty) => match *ty.kind() {
+                ty::Param(param) => {
+                    let idx = param.index as usize;
+                    self.unused_parameters[idx].upgrade(GenericUsage::ALIGN_OF);
                 }
                 _ => self.super_rvalue(rvalue, location),
             },
@@ -371,7 +378,7 @@ impl<'a, 'tcx> TypeVisitor<'tcx> for MarkUsedGenericParams<'a, 'tcx> {
         match c.kind() {
             ty::ConstKind::Param(param) => {
                 debug!(?param);
-                self.unused_parameters[param.index as usize].upgrade(GenericUsage::FullyUsed);
+                self.unused_parameters[param.index as usize].upgrade(GenericUsage::FULLY_USED);
                 ControlFlow::CONTINUE
             }
             ty::ConstKind::Unevaluated(ty::UnevaluatedConst { def, substs })
@@ -405,7 +412,7 @@ impl<'a, 'tcx> TypeVisitor<'tcx> for MarkUsedGenericParams<'a, 'tcx> {
             }
             ty::Param(param) => {
                 let idx = param.index as usize;
-                self.unused_parameters[idx].upgrade(GenericUsage::FullyUsed);
+                self.unused_parameters[idx].upgrade(GenericUsage::FULLY_USED);
                 ControlFlow::CONTINUE
             }
             _ => ty.super_visit_with(self),

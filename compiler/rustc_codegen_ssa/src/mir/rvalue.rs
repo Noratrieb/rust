@@ -197,7 +197,7 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                                     substs,
                                 )
                                 .unwrap()
-                                .polymorphize(bx.cx().tcx());
+                                .polymorphize(bx.cx().tcx(), &mut bx.polymorphization_cache());
                                 OperandValue::Immediate(bx.get_fn_addr(instance))
                             }
                             _ => bug!("{} cannot be reified to a fn ptr", operand.layout.ty),
@@ -213,7 +213,7 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                                     ty::ClosureKind::FnOnce,
                                 )
                                 .expect("failed to normalize and resolve closure during codegen")
-                                .polymorphize(bx.cx().tcx());
+                                .polymorphize(bx.cx().tcx(), &mut bx.polymorphization_cache());
                                 OperandValue::Immediate(bx.cx().get_fn_addr(instance))
                             }
                             _ => bug!("{} cannot be cast to a fn ptr", operand.layout.ty),

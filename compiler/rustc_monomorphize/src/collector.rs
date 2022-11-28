@@ -174,7 +174,7 @@
 //! regardless of whether it is actually needed or not.
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
-use rustc_data_structures::sync::{par_for_each_in, MTLock, MTRef};
+use rustc_data_structures::sync::{par_for_each_in, MTRef, MTLock};
 use rustc_hir as hir;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::{DefId, DefIdMap, LocalDefId};
@@ -190,7 +190,8 @@ use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_middle::ty::query::TyCtxtAt;
 use rustc_middle::ty::subst::{GenericArgKind, InternalSubsts};
 use rustc_middle::ty::{
-    self, GenericParamDefKind, Instance, Ty, TyCtxt, TypeFoldable, TypeVisitable, VtblEntry,
+    self, GenericParamDefKind, Instance, PolyCache, Ty, TyCtxt, TypeFoldable, TypeVisitable,
+    VtblEntry,
 };
 use rustc_middle::{middle::codegen_fn_attrs::CodegenFnAttrFlags, mir::visit::TyContext};
 use rustc_session::config::EntryFnType;
@@ -198,6 +199,7 @@ use rustc_session::lint::builtin::LARGE_ASSIGNMENTS;
 use rustc_session::Limit;
 use rustc_span::source_map::{dummy_spanned, respan, Span, Spanned, DUMMY_SP};
 use rustc_target::abi::Size;
+use std::mem;
 use std::ops::Range;
 use std::path::PathBuf;
 
@@ -240,6 +242,8 @@ struct MonoItems<'tcx> {
     // The collected mono items. The bool field in each element
     // indicates whether this element should be inlined.
     items: Vec<(Spanned<MonoItem<'tcx>>, bool /*inlined*/)>,
+
+    poly_cache: PolyCache<'tcx>,
 }
 
 impl<'tcx> MonoItems<'tcx> {
@@ -328,7 +332,7 @@ pub fn collect_crate_mono_items(
 ) -> (FxHashSet<MonoItem<'_>>, InliningMap<'_>) {
     let _prof_timer = tcx.prof.generic_activity("monomorphization_collector");
 
-    let roots =
+    let (roots, poly_cache) =
         tcx.sess.time("monomorphization_collector_root_collections", || collect_roots(tcx, mode));
 
     debug!("building mono item graph, beginning at roots");
@@ -343,6 +347,7 @@ pub fn collect_crate_mono_items(
 
         tcx.sess.time("monomorphization_collector_graph_walk", || {
             par_for_each_in(roots, |root| {
+                let mut poly_cache = poly_cache.clone();
                 let mut recursion_depths = DefIdMap::default();
                 collect_items_rec(
                     tcx,
@@ -351,6 +356,7 @@ pub fn collect_crate_mono_items(
                     &mut recursion_depths,
                     recursion_limit,
                     inlining_map,
+                    &mut poly_cache,
                 );
             });
         });
@@ -362,9 +368,17 @@ pub fn collect_crate_mono_items(
 // Find all non-generic items by walking the HIR. These items serve as roots to
 // start monomorphizing from.
 #[instrument(skip(tcx, mode), level = "debug")]
-fn collect_roots(tcx: TyCtxt<'_>, mode: MonoItemCollectionMode) -> Vec<MonoItem<'_>> {
+fn collect_roots<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    mode: MonoItemCollectionMode,
+) -> (Vec<MonoItem<'tcx>>, PolyCache<'tcx>) {
     debug!("collecting roots");
-    let mut roots = MonoItems { compute_inlining: false, tcx, items: Vec::new() };
+    let mut roots = MonoItems {
+        compute_inlining: false,
+        tcx,
+        items: Vec::new(),
+        poly_cache: PolyCache::default(),
+    };
 
     {
         let entry_fn = tcx.entry_fn(());
@@ -389,18 +403,23 @@ fn collect_roots(tcx: TyCtxt<'_>, mode: MonoItemCollectionMode) -> Vec<MonoItem<
     // We can only codegen items that are instantiable - items all of
     // whose predicates hold. Luckily, items that aren't instantiable
     // can't actually be used, so we can just skip codegenning them.
-    roots
+    let root_mono_items = roots
         .items
         .into_iter()
         .filter_map(|(Spanned { node: mono_item, .. }, _)| {
             mono_item.is_instantiable(tcx).then_some(mono_item)
         })
-        .collect()
+        .collect();
+
+    (root_mono_items, roots.poly_cache)
 }
 
 /// Collect all monomorphized items reachable from `starting_point`, and emit a note diagnostic if a
 /// post-monorphization error is encountered during a collection step.
-#[instrument(skip(tcx, visited, recursion_depths, recursion_limit, inlining_map), level = "debug")]
+#[instrument(
+    skip(tcx, visited, recursion_depths, recursion_limit, inlining_map, poly_cache),
+    level = "debug"
+)]
 fn collect_items_rec<'tcx>(
     tcx: TyCtxt<'tcx>,
     starting_point: Spanned<MonoItem<'tcx>>,
@@ -408,13 +427,20 @@ fn collect_items_rec<'tcx>(
     recursion_depths: &mut DefIdMap<usize>,
     recursion_limit: Limit,
     inlining_map: MTRef<'_, MTLock<InliningMap<'tcx>>>,
+    poly_cache: &mut PolyCache<'tcx>,
 ) {
     if !visited.lock_mut().insert(starting_point.node) {
         // We've been here already, no need to search again.
         return;
     }
 
-    let mut neighbors = MonoItems { compute_inlining: true, tcx, items: Vec::new() };
+    let neighbors_poly_cache = mem::take(poly_cache);
+    let mut neighbors = MonoItems {
+        compute_inlining: true,
+        tcx,
+        items: Vec::new(),
+        poly_cache: neighbors_poly_cache,
+    };
     let recursion_depth_reset;
 
     //
@@ -531,8 +557,17 @@ fn collect_items_rec<'tcx>(
     }
     inlining_map.lock_mut().record_accesses(starting_point.node, &neighbors.items);
 
+    *poly_cache = neighbors.poly_cache;
     for (neighbour, _) in neighbors.items {
-        collect_items_rec(tcx, neighbour, visited, recursion_depths, recursion_limit, inlining_map);
+        collect_items_rec(
+            tcx,
+            neighbour,
+            visited,
+            recursion_depths,
+            recursion_limit,
+            inlining_map,
+            poly_cache,
+        );
     }
 
     if let Some((def_id, depth)) = recursion_depth_reset {
@@ -994,7 +1029,7 @@ fn should_codegen_locally<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<'tcx>) ->
     }
 
     if tcx.is_reachable_non_generic(def_id)
-        || instance.polymorphize(tcx).upstream_monomorphization(tcx).is_some()
+        || instance.polymorphize_no_cache(tcx).upstream_monomorphization(tcx).is_some()
     {
         // We can link to the item in question, no instance needed in this crate.
         return false;
@@ -1128,7 +1163,7 @@ fn create_fn_mono_item<'tcx>(
         crate::util::dump_closure_profile(tcx, instance);
     }
 
-    respan(source, MonoItem::Fn(instance.polymorphize(tcx)))
+    respan(source, MonoItem::Fn(instance.polymorphize_no_cache(tcx)))
 }
 
 /// Creates a `MonoItem` for each method that is referenced by the vtable for

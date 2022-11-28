@@ -2,6 +2,7 @@ use crate::middle::codegen_fn_attrs::CodegenFnAttrFlags;
 use crate::ty::print::{FmtPrinter, Printer};
 use crate::ty::{self, Ty, TyCtxt, TypeFoldable, TypeSuperFoldable, TypeVisitable};
 use crate::ty::{EarlyBinder, InternalSubsts, SubstsRef};
+use rustc_data_structures::fx::FxHashMap;
 use rustc_errors::ErrorGuaranteed;
 use rustc_hir::def::Namespace;
 use rustc_hir::def_id::{CrateNum, DefId};
@@ -9,6 +10,7 @@ use rustc_hir::lang_items::LangItem;
 use rustc_macros::HashStable;
 use rustc_middle::ty::normalize_erasing_regions::NormalizationError;
 use rustc_span::Symbol;
+use rustc_target::abi::{Align, Size};
 
 use std::fmt;
 
@@ -618,26 +620,45 @@ impl<'tcx> Instance<'tcx> {
 
     /// Returns a new `Instance` where generic parameters in `instance.substs` are replaced by
     /// identity parameters if they are determined to be unused in `instance.def`.
-    pub fn polymorphize(self, tcx: TyCtxt<'tcx>) -> Self {
+    pub fn polymorphize_no_cache(self, tcx: TyCtxt<'tcx>) -> Self {
         if !tcx.sess.opts.unstable_opts.polymorphize {
             return self;
         }
 
-        let polymorphized_substs = polymorphize(tcx, self.def, self.substs);
+        let mut poly_cache = PolyCache::default();
+
+        let polymorphized_substs = polymorphize(tcx, self.def, self.substs, &mut poly_cache);
+        Self { def: self.def, substs: polymorphized_substs }
+    }
+
+    /// Returns a new `Instance` where generic parameters in `instance.substs` are replaced by
+    /// identity parameters if they are determined to be unused in `instance.def`.
+    pub fn polymorphize(self, tcx: TyCtxt<'tcx>, poly_cache: &mut PolyCache<'tcx>) -> Self {
+        if !tcx.sess.opts.unstable_opts.polymorphize {
+            return self;
+        }
+
+        let polymorphized_substs = polymorphize(tcx, self.def, self.substs, poly_cache);
         Self { def: self.def, substs: polymorphized_substs }
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, TyDecodable, TyEncodable, HashStable)]
-pub enum GenericUsage {
-    Unused,
-    SizeOf,
-    FullyUsed,
+bitflags::bitflags! {
+    #[derive(TyDecodable, TyEncodable, HashStable)]
+    pub struct GenericUsage: u8 {
+        const SIZE_OF = 1 << 1;
+        const ALIGN_OF = 1 << 2;
+        const FULLY_USED = 1 << 3;
+    }
 }
 
 impl GenericUsage {
+    pub fn unused() -> Self {
+        Self::empty()
+    }
+
     pub fn is_unused(&self) -> bool {
-        matches!(self, Self::Unused)
+        self.is_empty()
     }
 
     pub fn is_used(&self) -> bool {
@@ -645,25 +666,80 @@ impl GenericUsage {
     }
 
     pub fn is_not_fully_used(&self) -> bool {
-        !matches!(self, Self::FullyUsed)
+        !self.intersects(Self::FULLY_USED)
     }
 
     pub fn upgrade(&mut self, to: Self) {
-        use GenericUsage::*;
-
-        match (*self, to) {
-            (Unused, _) => *self = to,
-            (SizeOf, FullyUsed) => *self = to,
-            _ => {}
-        }
+        *self = *self | to;
     }
 }
 
-#[instrument(level = "debug", skip(tcx), ret)]
+#[derive(Default, Clone)]
+
+pub struct PolyCache<'tcx> {
+    by_size: FxHashMap<Size, Ty<'tcx>>,
+    by_align: FxHashMap<Align, Ty<'tcx>>,
+    by_size_align: FxHashMap<(Size, Align), Ty<'tcx>>,
+}
+
+impl<'tcx> PolyCache<'tcx> {
+    fn canonical_poly_ty(
+        &mut self,
+        tcx: TyCtxt<'tcx>,
+        usage: GenericUsage,
+        ty: Ty<'tcx>,
+        def_id: DefId,
+    ) -> Option<Ty<'tcx>> {
+        if usage.contains(GenericUsage::FULLY_USED) {
+            return None;
+        }
+
+        let is_size = usage.intersects(GenericUsage::SIZE_OF);
+        let is_align = usage.intersects(GenericUsage::ALIGN_OF);
+
+        if !is_size && !is_align {
+            bug!(
+                "Trying to get unused type param from poly cache, should have been handled earlier."
+            );
+        }
+
+        let param_env_ty = tcx.param_env(def_id).and(ty);
+
+        let layout = tcx.layout_of(param_env_ty).ok()?;
+        let size = layout.size;
+        // align_of uses the ABI alignment.
+        let align = layout.align.abi;
+
+        if is_size && is_align {
+            let result_ty = self.by_size_align.get(&(size, align));
+            if let Some(&ty) = result_ty {
+                return Some(ty);
+            }
+
+            self.by_align.insert(align, ty);
+            self.by_size.insert(size, ty);
+            self.by_size_align.insert((size, align), ty);
+            return Some(ty);
+        }
+
+        if is_size {
+            return Some(*self.by_size.entry(size).or_insert(ty));
+        }
+
+        if is_align {
+            return Some(*self.by_align.entry(align).or_insert(ty));
+        }
+
+        None
+    }
+}
+
+#[instrument(level = "debug", skip(tcx, poly_cache), ret)]
 fn polymorphize<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: ty::InstanceDef<'tcx>,
     substs: SubstsRef<'tcx>,
+    poly_cache: &mut PolyCache<'tcx>,
 ) -> SubstsRef<'tcx> {
     let unused = tcx.unused_generic_params(instance);
     debug!(?unused, "Unused substs");
@@ -683,11 +759,12 @@ fn polymorphize<'tcx>(
     let has_upvars = upvars_ty.map_or(false, |ty| !ty.tuple_fields().is_empty());
     debug!("polymorphize: upvars_ty={:?} has_upvars={:?}", upvars_ty, has_upvars);
 
-    struct PolymorphizationFolder<'tcx> {
+    struct PolymorphizationFolder<'a, 'tcx> {
         tcx: TyCtxt<'tcx>,
+        poly_cache: &'a mut PolyCache<'tcx>,
     }
 
-    impl<'tcx> ty::TypeFolder<'tcx> for PolymorphizationFolder<'tcx> {
+    impl<'tcx> ty::TypeFolder<'tcx> for PolymorphizationFolder<'_, 'tcx> {
         fn tcx<'a>(&'a self) -> TyCtxt<'tcx> {
             self.tcx
         }
@@ -700,6 +777,7 @@ fn polymorphize<'tcx>(
                         self.tcx,
                         ty::InstanceDef::Item(ty::WithOptConstParam::unknown(def_id)),
                         substs,
+                        self.poly_cache,
                     );
                     if substs == polymorphized_substs {
                         ty
@@ -712,6 +790,7 @@ fn polymorphize<'tcx>(
                         self.tcx,
                         ty::InstanceDef::Item(ty::WithOptConstParam::unknown(def_id)),
                         substs,
+                        self.poly_cache,
                     );
                     if substs == polymorphized_substs {
                         ty
@@ -726,7 +805,9 @@ fn polymorphize<'tcx>(
 
     InternalSubsts::for_item(tcx, def_id, |param, _| {
         let is_unused = unused.get(param.index as usize).map_or(false, GenericUsage::is_unused);
-        let is_size_of = unused.get(param.index as usize) == Some(&GenericUsage::SizeOf);
+        let is_size_of = unused
+            .get(param.index as usize)
+            .map_or(false, |usage| usage.intersects(GenericUsage::SIZE_OF));
 
         debug!("polymorphize: param={:?} is_unused={:?}", param, is_unused);
         match param.kind {
@@ -741,23 +822,10 @@ fn polymorphize<'tcx>(
                     // ..and polymorphize any closures/generators captured as upvars.
                     let upvars_ty = upvars_ty.unwrap();
                     let polymorphized_upvars_ty = upvars_ty.fold_with(
-                        &mut PolymorphizationFolder { tcx });
+                        &mut PolymorphizationFolder { tcx, poly_cache });
                     debug!("polymorphize: polymorphized_upvars_ty={:?}", polymorphized_upvars_ty);
                     ty::GenericArg::from(polymorphized_upvars_ty)
                 },
-
-            ty::GenericParamDefKind::Type { .. } if is_size_of => {
-                // this hack is very evil (doesn't work)
-                let ty = substs[param.index as usize].expect_ty();
-                let param_env_ty = ty::ParamEnv::reveal_all().and(ty);
-                let layout = tcx.layout_of(param_env_ty);
-                match layout {
-                    Ok(layout) => {
-                        ty::Const::from_usize(tcx, layout.size.bytes()).into()
-                    }
-                    Err(_) => substs[param.index as usize]
-                }
-            }
 
             // Simple case: If parameter is a const or type parameter..
             ty::GenericParamDefKind::Const { .. } | ty::GenericParamDefKind::Type { .. } if
@@ -766,6 +834,15 @@ fn polymorphize<'tcx>(
                     // ..then use the identity for this parameter.
                     tcx.mk_param_from_def(param),
 
+            ty::GenericParamDefKind::Type { .. } if is_size_of => {
+                let ty = substs[param.index as usize].expect_ty();
+                let usage = unused.get(param.index as usize).copied().unwrap_or(GenericUsage::FULLY_USED);
+
+                match poly_cache.canonical_poly_ty(tcx, usage, ty, def_id) {
+                    Some(ty) => ty.into(),
+                    None => substs[param.index as usize]
+                }
+            }
 
             // Otherwise, use the parameter as before.
             _ => substs[param.index as usize],

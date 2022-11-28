@@ -18,7 +18,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::layout::{
     FnAbiError, FnAbiOfHelpers, FnAbiRequest, LayoutError, LayoutOfHelpers, TyAndLayout,
 };
-use rustc_middle::ty::{self, Ty, TyCtxt};
+use rustc_middle::ty::{self, PolyCache, Ty, TyCtxt};
 use rustc_span::Span;
 use rustc_target::abi::{self, call::FnAbi, Align, Size, WrappingRange};
 use rustc_target::spec::{HasTargetSpec, Target};
@@ -153,6 +153,10 @@ impl<'a, 'll, 'tcx> BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
     }
 
     fn set_span(&mut self, _span: Span) {}
+
+    fn polymorphization_cache(&self) -> std::cell::RefMut<'_, PolyCache<'tcx>> {
+        self.cx.poly_cache.borrow_mut()
+    }
 
     fn append_block(cx: &'a CodegenCx<'ll, 'tcx>, llfn: &'ll Value, name: &str) -> &'ll BasicBlock {
         unsafe {
