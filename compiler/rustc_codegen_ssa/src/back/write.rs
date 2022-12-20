@@ -171,9 +171,22 @@ impl ModuleConfig {
             EmitObj::ObjectCode(BitcodeSection::None)
         };
 
-        ModuleConfig {
-            passes: if_regular!(sess.opts.cg.passes.clone(), vec![]),
+        let mut passes = if_regular!(sess.opts.cg.passes.clone(), vec![]);
 
+        if sess.instrument_mcount() {
+            let ee_instrument = "ee-instrument".into();
+            let post_inline_ee_instrument = "post-inline-ee-instrument".into();
+
+            if !passes.contains(&ee_instrument) {
+                passes.push(ee_instrument);
+            }
+            if !passes.contains(&post_inline_ee_instrument) {
+                passes.push(post_inline_ee_instrument);
+            }
+        }
+
+        ModuleConfig {
+            passes,
             opt_level: opt_level_and_size,
             opt_size: opt_level_and_size,
 
