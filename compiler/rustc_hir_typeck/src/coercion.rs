@@ -43,7 +43,7 @@ use rustc_hir as hir;
 use rustc_hir::def_id::DefId;
 use rustc_hir::intravisit::{self, Visitor};
 use rustc_hir::Expr;
-use rustc_hir_analysis::astconv::AstConv;
+use rustc_hir_analysis::astconv::{AstConvBase, AstConvBaseExt};
 use rustc_infer::infer::type_variable::{TypeVariableOrigin, TypeVariableOriginKind};
 use rustc_infer::infer::{Coercion, InferOk, InferResult};
 use rustc_infer::traits::Obligation;
@@ -1807,7 +1807,7 @@ impl<'tcx, 'exprs, E: AsCoercionSite> CoerceMany<'tcx, 'exprs, E> {
             // Get the return type.
             && let hir::TyKind::OpaqueDef(..) = ty.kind
         {
-            let ty = <dyn AstConv<'_>>::ast_ty_to_ty(fcx, ty);
+            let ty = fcx.ast_ty_to_ty(ty);
             // Get the `impl Trait`'s `DefId`.
             if let ty::Alias(ty::Opaque, ty::AliasTy { def_id, .. }) = ty.kind()
                 // Get the `impl Trait`'s `Item` so that we can get its trait bounds and
@@ -1866,7 +1866,7 @@ impl<'tcx, 'exprs, E: AsCoercionSite> CoerceMany<'tcx, 'exprs, E> {
     fn is_return_ty_unsized<'a>(&self, fcx: &FnCtxt<'a, 'tcx>, blk_id: hir::HirId) -> bool {
         if let Some((fn_decl, _)) = fcx.get_fn_decl(blk_id)
             && let hir::FnRetTy::Return(ty) = fn_decl.output
-            && let ty = <dyn AstConv<'_>>::ast_ty_to_ty(fcx, ty)
+            && let ty = fcx.ast_ty_to_ty( ty)
             && let ty::Dynamic(..) = ty.kind()
         {
             return true;

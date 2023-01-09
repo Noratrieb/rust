@@ -46,10 +46,17 @@ use smallvec::{smallvec, SmallVec};
 use std::collections::BTreeSet;
 use std::slice;
 
+use self::errors::AstConvErrorsExt;
+pub use self::generics::AstConvGenericsExt;
+
 #[derive(Debug)]
 pub struct PathSeg(pub DefId, pub usize);
 
-pub trait AstConv<'tcx> {
+impl<'tcx, A: ?Sized + AstConvBaseExt<'tcx> + AstConvBaseExt<'tcx>> AstConv<'tcx> for A {}
+
+pub trait AstConv<'tcx>: AstConvGenericsExt<'tcx> + AstConvBaseExt<'tcx> {}
+
+pub trait AstConvBase<'tcx>: Sized {
     fn tcx<'a>(&'a self) -> TyCtxt<'tcx>;
 
     fn item_def_id(&self) -> DefId;
@@ -122,7 +129,7 @@ pub trait AstConv<'tcx> {
 }
 
 #[derive(Debug)]
-struct ConvertedBinding<'a, 'tcx> {
+pub struct ConvertedBinding<'a, 'tcx> {
     hir_id: hir::HirId,
     item_name: Ident,
     kind: ConvertedBindingKind<'a, 'tcx>,
@@ -160,7 +167,7 @@ pub enum IsMethodCall {
 /// Denotes the "position" of a generic argument, indicating if it is a generic type,
 /// generic function or generic method call.
 #[derive(Copy, Clone, PartialEq)]
-pub(crate) enum GenericArgPosition {
+pub enum GenericArgPosition {
     Type,
     Value, // e.g., functions
     MethodCall,
@@ -201,9 +208,13 @@ pub trait CreateSubstsForGenericArgsCtxt<'a, 'tcx> {
     ) -> subst::GenericArg<'tcx>;
 }
 
-impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
+impl<'tcx, A: ?Sized + AstConvBase<'tcx>> AstConvBaseExt<'tcx> for A {}
+
+pub trait AstConvBaseExt<'tcx>:
+    AstConvBase<'tcx> + AstConvErrorsExt<'tcx> + AstConvGenericsExt<'tcx>
+{
     #[instrument(level = "debug", skip(self), ret)]
-    pub fn ast_region_to_region(
+    fn ast_region_to_region(
         &self,
         lifetime: &hir::Lifetime,
         def: Option<&ty::GenericParamDef>,
@@ -261,7 +272,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
 
     /// Given a path `path` that refers to an item `I` with the declared generics `decl_generics`,
     /// returns an appropriate set of substitutions for this particular reference to `I`.
-    pub fn ast_path_substs_for_ty(
+    fn ast_path_substs_for_ty(
         &self,
         span: Span,
         def_id: DefId,
@@ -368,8 +379,8 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             return (tcx.intern_substs(parent_substs), arg_count);
         }
 
-        struct SubstsForAstPathCtxt<'a, 'tcx> {
-            astconv: &'a (dyn AstConv<'tcx> + 'a),
+        struct SubstsForAstPathCtxt<'a, A: ?Sized> {
+            astconv: &'a A,
             def_id: DefId,
             generic_args: &'a GenericArgs<'a>,
             span: Span,
@@ -377,7 +388,9 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             infer_args: bool,
         }
 
-        impl<'a, 'tcx> CreateSubstsForGenericArgsCtxt<'a, 'tcx> for SubstsForAstPathCtxt<'a, 'tcx> {
+        impl<'a, 'tcx, A: AstConv<'tcx>> CreateSubstsForGenericArgsCtxt<'a, 'tcx>
+            for SubstsForAstPathCtxt<'a, A>
+        {
             fn args_for_def_id(&mut self, did: DefId) -> (Option<&'a GenericArgs<'a>>, bool) {
                 if did == self.def_id {
                     (Some(self.generic_args), self.infer_args)
@@ -593,7 +606,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         assoc_bindings
     }
 
-    pub fn create_substs_for_associated_item(
+    fn create_substs_for_associated_item(
         &self,
         span: Span,
         item_def_id: DefId,
@@ -628,7 +641,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     ///
     /// If the `projections` argument is `None`, then assoc type bindings like `Foo<T = X>`
     /// are disallowed. Otherwise, they are pushed onto the vector given.
-    pub fn instantiate_mono_trait_ref(
+    fn instantiate_mono_trait_ref(
         &self,
         trait_ref: &hir::TraitRef<'_>,
         self_ty: Ty<'tcx>,
@@ -723,7 +736,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     /// `Bar<'a>`. The returned poly-trait-ref will have this binder instantiated explicitly,
     /// however.
     #[instrument(level = "debug", skip(self, span, constness, bounds, speculative))]
-    pub(crate) fn instantiate_poly_trait_ref(
+    fn instantiate_poly_trait_ref(
         &self,
         trait_ref: &hir::TraitRef<'_>,
         span: Span,
@@ -759,7 +772,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         )
     }
 
-    pub(crate) fn instantiate_lang_item_trait_ref(
+    fn instantiate_lang_item_trait_ref(
         &self,
         lang_item: hir::LangItem,
         span: Span,
@@ -853,7 +866,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     }
 
     /// Sets `implicitly_sized` to true on `Bounds` if necessary
-    pub(crate) fn add_implicitly_sized(
+    fn add_implicitly_sized(
         &self,
         bounds: &mut Bounds<'tcx>,
         self_ty: Ty<'tcx>,
@@ -932,7 +945,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     /// `param_ty` and `ast_bounds`. See `instantiate_poly_trait_ref`
     /// for more details.
     #[instrument(level = "debug", skip(self, ast_bounds, bounds))]
-    pub(crate) fn add_bounds<'hir, I: Iterator<Item = &'hir hir::GenericBound<'hir>>>(
+    fn add_bounds<'hir, I: Iterator<Item = &'hir hir::GenericBound<'hir>>>(
         &self,
         param_ty: Ty<'tcx>,
         ast_bounds: I,
@@ -993,7 +1006,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     /// example above, but is not true in supertrait listings like `trait Foo: Bar + Baz`.
     ///
     /// `span` should be the declaration size of the parameter.
-    pub(crate) fn compute_bounds(
+    fn compute_bounds(
         &self,
         param_ty: Ty<'tcx>,
         ast_bounds: &[hir::GenericBound<'_>],
@@ -1003,7 +1016,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
 
     /// Convert the bounds in `ast_bounds` that refer to traits which define an associated type
     /// named `assoc_name` into ty::Bounds. Ignore the rest.
-    pub(crate) fn compute_bounds_that_match_assoc_type(
+    fn compute_bounds_that_match_assoc_type(
         &self,
         param_ty: Ty<'tcx>,
         ast_bounds: &[hir::GenericBound<'_>],
@@ -1841,7 +1854,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     // NOTE: When this function starts resolving `Trait::AssocTy` successfully
     // it should also start reporting the `BARE_TRAIT_OBJECTS` lint.
     #[instrument(level = "debug", skip(self, hir_ref_id, span, qself, assoc_segment), fields(assoc_ident=?assoc_segment.ident), ret)]
-    pub fn associated_path_to_ty(
+    fn associated_path_to_ty(
         &self,
         hir_ref_id: hir::HirId,
         span: Span,
@@ -2205,7 +2218,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         self.normalize_ty(span, tcx.mk_projection(item_def_id, item_substs))
     }
 
-    pub fn prohibit_generics<'a>(
+    fn prohibit_generics<'a>(
         &self,
         segments: impl Iterator<Item = &'a hir::PathSegment<'a>> + Clone,
         extend: impl Fn(&mut Diagnostic),
@@ -2313,7 +2326,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     }
 
     // FIXME(eddyb, varkor) handle type paths here too, not just value ones.
-    pub fn def_ids_for_value_path_segments(
+    fn def_ids_for_value_path_segments(
         &self,
         segments: &[hir::PathSegment<'_>],
         self_ty: Option<Ty<'tcx>>,
@@ -2440,7 +2453,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     }
 
     /// Check a type `Path` and convert it to a `Ty`.
-    pub fn res_to_ty(
+    fn res_to_ty(
         &self,
         opt_self_ty: Option<Ty<'tcx>>,
         path: &hir::Path<'_>,
@@ -2682,13 +2695,13 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
 
     /// Parses the programmer's textual representation of a type into our
     /// internal notion of a type.
-    pub fn ast_ty_to_ty(&self, ast_ty: &hir::Ty<'_>) -> Ty<'tcx> {
+    fn ast_ty_to_ty(&self, ast_ty: &hir::Ty<'_>) -> Ty<'tcx> {
         self.ast_ty_to_ty_inner(ast_ty, false, false)
     }
 
     /// Parses the programmer's textual representation of a type into our
     /// internal notion of a type.  This is meant to be used within a path.
-    pub fn ast_ty_to_ty_in_path(&self, ast_ty: &hir::Ty<'_>) -> Ty<'tcx> {
+    fn ast_ty_to_ty_in_path(&self, ast_ty: &hir::Ty<'_>) -> Ty<'tcx> {
         self.ast_ty_to_ty_inner(ast_ty, false, true)
     }
 
@@ -2838,7 +2851,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         if in_trait { tcx.mk_projection(def_id, substs) } else { tcx.mk_opaque(def_id, substs) }
     }
 
-    pub fn ty_of_arg(&self, ty: &hir::Ty<'_>, expected_ty: Option<Ty<'tcx>>) -> Ty<'tcx> {
+    fn ty_of_arg(&self, ty: &hir::Ty<'_>, expected_ty: Option<Ty<'tcx>>) -> Ty<'tcx> {
         match ty.kind {
             hir::TyKind::Infer if expected_ty.is_some() => {
                 self.record_ty(ty.hir_id, expected_ty.unwrap(), ty.span);
@@ -2849,7 +2862,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     }
 
     #[instrument(level = "debug", skip(self, hir_id, unsafety, abi, decl, generics, hir_ty), ret)]
-    pub fn ty_of_fn(
+    fn ty_of_fn(
         &self,
         hir_id: hir::HirId,
         unsafety: hir::Unsafety,

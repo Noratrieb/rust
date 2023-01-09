@@ -1,4 +1,4 @@
-use crate::astconv::AstConv;
+use crate::astconv::AstConvBase;
 use crate::errors::{ManualImplementation, MissingTypeParams};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_errors::{pluralize, struct_span_err, Applicability, ErrorGuaranteed};
@@ -12,10 +12,12 @@ use rustc_span::{Span, Symbol, DUMMY_SP};
 
 use std::collections::BTreeSet;
 
-impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
+impl<'tcx, A: ?Sized + AstConvBase<'tcx>> AstConvErrorsExt<'tcx> for A {}
+
+pub trait AstConvErrorsExt<'tcx>: AstConvBase<'tcx> {
     /// On missing type parameters, emit an E0393 error and provide a structured suggestion using
     /// the type parameter's name as a placeholder.
-    pub(crate) fn complain_about_missing_type_params(
+    fn complain_about_missing_type_params(
         &self,
         missing_type_params: Vec<Symbol>,
         def_id: DefId,
@@ -37,7 +39,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
 
     /// When the code is using the `Fn` traits directly, instead of the `Fn(A) -> B` syntax, emit
     /// an error and attempt to build a reasonable structured suggestion.
-    pub(crate) fn complain_about_internal_fn_trait(
+    fn complain_about_internal_fn_trait(
         &self,
         span: Span,
         trait_def_id: DefId,
@@ -126,7 +128,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         }
     }
 
-    pub(crate) fn complain_about_assoc_type_not_found<I>(
+    fn complain_about_assoc_type_not_found<I>(
         &self,
         all_candidates: impl Fn() -> I,
         ty_param_name: &str,
@@ -225,7 +227,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     /// reasonable suggestion on how to write it. For the case of multiple associated types in the
     /// same trait bound have the same name (as they come from different supertraits), we instead
     /// emit a generic note suggesting using a `where` clause to constraint instead.
-    pub(crate) fn complain_about_missing_associated_types(
+    fn complain_about_missing_associated_types(
         &self,
         associated_types: FxHashMap<Span, BTreeSet<DefId>>,
         potential_assoc_types: Vec<Span>,

@@ -14,6 +14,7 @@ use rustc_span::{Span, DUMMY_SP};
 
 use super::ItemCtxt;
 use super::{bad_placeholder, is_suggestable_infer_ty};
+use crate::astconv::AstConvBaseExt;
 use crate::errors::UnconstrainedOpaqueType;
 
 /// Computes the relevant generic parameter for a potential generic const argument.
@@ -62,7 +63,7 @@ pub(super) fn opt_const_param_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Option<
                 .next()
                 .unwrap();
             let item_did = tcx.hir().local_def_id(item_hir_id).to_def_id();
-            let item_ctxt = &ItemCtxt::new(tcx, item_did) as &dyn crate::astconv::AstConv<'_>;
+            let item_ctxt = &ItemCtxt::new(tcx, item_did);
             let ty = item_ctxt.ast_ty_to_ty(hir_ty);
 
             // Iterate through the generics of the projection to find the one that corresponds to

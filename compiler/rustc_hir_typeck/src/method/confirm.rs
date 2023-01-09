@@ -4,7 +4,9 @@ use crate::{callee, FnCtxt};
 use rustc_hir as hir;
 use rustc_hir::def_id::DefId;
 use rustc_hir::GenericArg;
-use rustc_hir_analysis::astconv::{AstConv, CreateSubstsForGenericArgsCtxt, IsMethodCall};
+use rustc_hir_analysis::astconv::{
+    AstConvBase, AstConvBaseExt, AstConvGenericsExt, CreateSubstsForGenericArgsCtxt, IsMethodCall,
+};
 use rustc_infer::infer::{self, InferOk};
 use rustc_middle::traits::{ObligationCauseCode, UnifyReceiverContext};
 use rustc_middle::ty::adjustment::{Adjust, Adjustment, PointerCast};
@@ -330,7 +332,7 @@ impl<'a, 'tcx> ConfirmContext<'a, 'tcx> {
         // variables.
         let generics = self.tcx.generics_of(pick.item.def_id);
 
-        let arg_count_correct = <dyn AstConv<'_>>::check_generic_arg_count_for_call(
+        let arg_count_correct = FnCtxt::check_generic_arg_count_for_call(
             self.tcx,
             self.span,
             pick.item.def_id,
@@ -368,8 +370,7 @@ impl<'a, 'tcx> ConfirmContext<'a, 'tcx> {
             ) -> subst::GenericArg<'tcx> {
                 match (&param.kind, arg) {
                     (GenericParamDefKind::Lifetime, GenericArg::Lifetime(lt)) => {
-                        <dyn AstConv<'_>>::ast_region_to_region(self.cfcx.fcx, lt, Some(param))
-                            .into()
+                        self.cfcx.fcx.ast_region_to_region(lt, Some(param)).into()
                     }
                     (GenericParamDefKind::Type { .. }, GenericArg::Type(ty)) => {
                         self.cfcx.to_ty(ty).into()
@@ -397,7 +398,7 @@ impl<'a, 'tcx> ConfirmContext<'a, 'tcx> {
                 self.cfcx.var_for_def(self.cfcx.span, param)
             }
         }
-        <dyn AstConv<'_>>::create_substs_for_generic_args(
+        FnCtxt::create_substs_for_generic_args(
             self.tcx,
             pick.item.def_id,
             parent_substs,

@@ -11,7 +11,7 @@ use crate::coercion::DynamicCoerceMany;
 use crate::{Diverges, EnclosingBreakables, Inherited};
 use rustc_hir as hir;
 use rustc_hir::def_id::DefId;
-use rustc_hir_analysis::astconv::AstConv;
+use rustc_hir_analysis::astconv::{AstConvBase, AstConvBaseExt};
 use rustc_infer::infer;
 use rustc_infer::infer::error_reporting::TypeErrCtxt;
 use rustc_infer::infer::type_variable::{TypeVariableOrigin, TypeVariableOriginKind};
@@ -191,7 +191,7 @@ impl<'a, 'tcx> Deref for FnCtxt<'a, 'tcx> {
     }
 }
 
-impl<'a, 'tcx> AstConv<'tcx> for FnCtxt<'a, 'tcx> {
+impl<'a, 'tcx> AstConvBase<'tcx> for FnCtxt<'a, 'tcx> {
     fn tcx<'b>(&'b self) -> TyCtxt<'tcx> {
         self.tcx
     }
@@ -287,8 +287,7 @@ impl<'a, 'tcx> AstConv<'tcx> for FnCtxt<'a, 'tcx> {
             poly_trait_ref,
         );
 
-        let item_substs = <dyn AstConv<'tcx>>::create_substs_for_associated_item(
-            self,
+        let item_substs = self.create_substs_for_associated_item(
             span,
             item_def_id,
             item_segment,

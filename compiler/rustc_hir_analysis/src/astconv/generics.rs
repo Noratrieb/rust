@@ -1,6 +1,6 @@
 use super::IsMethodCall;
 use crate::astconv::{
-    AstConv, CreateSubstsForGenericArgsCtxt, ExplicitLateBound, GenericArgCountMismatch,
+    AstConvBase, CreateSubstsForGenericArgsCtxt, ExplicitLateBound, GenericArgCountMismatch,
     GenericArgCountResult, GenericArgPosition,
 };
 use crate::errors::AssocTypeBindingNotAllowed;
@@ -18,7 +18,9 @@ use rustc_session::lint::builtin::LATE_BOUND_LIFETIME_ARGUMENTS;
 use rustc_span::{symbol::kw, Span};
 use smallvec::SmallVec;
 
-impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
+impl<'tcx, A: AstConvBase<'tcx>> AstConvGenericsExt<'tcx> for A {}
+
+pub trait AstConvGenericsExt<'tcx>: AstConvBase<'tcx> {
     /// Report an error that a generic argument did not match the generic parameter that was
     /// expected.
     fn generic_arg_mismatch_err(
@@ -178,7 +180,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     ///   instantiate a `GenericArg`.
     /// - `inferred_kind`: if no parameter was provided, and inference is enabled, then
     ///   creates a suitable inference variable.
-    pub fn create_substs_for_generic_args<'a>(
+    fn create_substs_for_generic_args<'a>(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
         parent_substs: &[subst::GenericArg<'tcx>],
@@ -384,7 +386,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
 
     /// Checks that the correct number of generic arguments have been provided.
     /// Used specifically for function calls.
-    pub fn check_generic_arg_count_for_call(
+    fn check_generic_arg_count_for_call(
         tcx: TyCtxt<'_>,
         span: Span,
         def_id: DefId,
@@ -417,7 +419,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     /// Checks that the correct number of generic arguments have been provided.
     /// This is used both for datatypes and function calls.
     #[instrument(skip(tcx, gen_pos), level = "debug")]
-    pub(crate) fn check_generic_arg_count(
+    fn check_generic_arg_count(
         tcx: TyCtxt<'_>,
         span: Span,
         def_id: DefId,
@@ -608,13 +610,13 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     }
 
     /// Emits an error regarding forbidden type binding associations
-    pub fn prohibit_assoc_ty_binding(tcx: TyCtxt<'_>, span: Span) {
+    fn prohibit_assoc_ty_binding(tcx: TyCtxt<'_>, span: Span) {
         tcx.sess.emit_err(AssocTypeBindingNotAllowed { span });
     }
 
     /// Prohibits explicit lifetime arguments if late-bound lifetime parameters
     /// are present. This is used both for datatypes and function calls.
-    pub(crate) fn prohibit_explicit_late_bound_lifetimes(
+    fn prohibit_explicit_late_bound_lifetimes(
         tcx: TyCtxt<'_>,
         def: &ty::Generics,
         args: &hir::GenericArgs<'_>,
