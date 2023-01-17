@@ -2767,6 +2767,10 @@ impl Defaultness {
     pub fn is_default(&self) -> bool {
         matches!(*self, Defaultness::Default { .. })
     }
+
+    pub fn is_default_with_value(&self) -> bool {
+        matches!(*self, Defaultness::Default { has_value: true })
+    }
 }
 
 #[derive(Debug, HashStable_Generic)]

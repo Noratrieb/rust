@@ -738,7 +738,7 @@ impl<T> Trait<T> for X {
 
         self.suggest_constraining_opaque_associated_type(diag, &msg, proj_ty, values.found);
 
-        if self.point_at_associated_type(diag, body_owner_def_id, values.found) {
+        if self.point_at_associated_type(diag, assoc, values.found) {
             return;
         }
 
@@ -873,58 +873,61 @@ fn foo(&self) -> Self::T { String::new() }
     fn point_at_associated_type(
         self,
         diag: &mut Diagnostic,
-        body_owner_def_id: DefId,
+        assoc_item: &ty::AssocItem,
         found: Ty<'tcx>,
     ) -> bool {
-        let Some(hir_id) = body_owner_def_id.as_local() else {
-            return false;
-        };
-        let hir_id = self.hir().local_def_id_to_hir_id(hir_id);
-        // When `body_owner` is an `impl` or `trait` item, look in its associated types for
-        // `expected` and point at it.
-        let parent_id = self.hir().get_parent_item(hir_id);
-        let item = self.hir().find_by_def_id(parent_id.def_id);
-        debug!("expected_projection parent item {:?}", item);
-        match item {
-            Some(hir::Node::Item(hir::Item { kind: hir::ItemKind::Trait(.., items), .. })) => {
-                // FIXME: account for `#![feature(specialization)]`
-                for item in &items[..] {
-                    match item.kind {
-                        hir::AssocItemKind::Type => {
-                            // FIXME: account for returning some type in a trait fn impl that has
-                            // an assoc type as a return type (#72076).
-                            if let hir::Defaultness::Default { has_value: true } =
-                                self.impl_defaultness(item.id.owner_id)
-                            {
-                                if self.type_of(item.id.owner_id) == found {
-                                    diag.span_label(
-                                        item.span,
-                                        "associated type defaults can't be assumed inside the \
+        let did = assoc_item.def_id;
+        let assoc_item_span = self.hir().span_if_local(did);
+
+        debug!(?assoc_item, "Associated item");
+
+        if assoc_item.container == ty::TraitContainer
+            || assoc_item.container == ty::ImplContainer && assoc_item.trait_item_def_id.is_some()
+        {
+            match assoc_item.kind {
+                ty::AssocKind::Type => {
+                    let defaultness = assoc_item.defaultness(self);
+                    debug!(?defaultness, "Assoc type defaultness");
+                    if defaultness.is_default_with_value() {
+                        let expected_ty = self.type_of(did);
+                        debug!(?expected_ty, ?found, "Compare types");
+                        // FIXME(Nilstrieb): Move this to a downstream crate so that we can properly compare the types.
+                        if expected_ty == found {
+                            if let Some(span) = assoc_item_span {
+                                diag.span_label(
+                                    span,
+                                    "associated type defaults can't be assumed inside the \
                                             trait defining them",
-                                    );
-                                    return true;
-                                }
+                                );
+                            } else {
+                                diag.note(
+                                    "associated type defaults can't be assumed inside the \
+                                            trait defining them",
+                                );
                             }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Some(hir::Node::Item(hir::Item {
-                kind: hir::ItemKind::Impl(hir::Impl { items, .. }),
-                ..
-            })) => {
-                for item in &items[..] {
-                    if let hir::AssocItemKind::Type = item.kind {
-                        if self.type_of(item.id.owner_id) == found {
-                            diag.span_label(item.span, "expected this associated type");
+
                             return true;
                         }
                     }
                 }
+                _ => {}
             }
-            _ => {}
+        } else {
+            match assoc_item.kind {
+                ty::AssocKind::Type => {
+                    let expected_ty = self.type_of(did);
+
+                    if expected_ty == found {
+                        if let Some(span) = assoc_item_span {
+                            diag.span_label(span, "expected this associated type");
+                        }
+                        return true;
+                    }
+                }
+                _ => {}
+            }
         }
+
         false
     }
 
