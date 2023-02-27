@@ -1,6 +1,7 @@
 use super::{AllocId, AllocRange, ConstAlloc, Pointer, Scalar};
 
 use crate::mir::interpret::ConstValue;
+use crate::ty::FieldDef;
 use crate::ty::{layout, query::TyCtxtAt, tls, Ty, ValTree};
 
 use rustc_data_structures::sync::Lock;
@@ -8,6 +9,8 @@ use rustc_errors::{pluralize, struct_span_err, DiagnosticBuilder, ErrorGuarantee
 use rustc_macros::HashStable;
 use rustc_session::CtfeBacktrace;
 use rustc_span::def_id::DefId;
+use rustc_span::Symbol;
+use rustc_target::abi::VariantIdx;
 use rustc_target::abi::{call, Align, Size};
 use std::{any::Any, backtrace::Backtrace, fmt};
 
@@ -203,6 +206,35 @@ pub struct ScalarSizeMismatch {
     pub data_size: u64,
 }
 
+/// We want to show a nice path to the invalid field for diagnostics,
+/// but avoid string operations in the happy case where no error happens.
+/// So we track a `Vec<PathElem>` where `PathElem` contains all the data we
+/// need to later print something for the user.
+#[derive(Copy, Clone, Debug)]
+pub enum ValidationPathInfo {
+    Field(FieldDef),
+    Variant(Symbol),
+    GeneratorState(VariantIdx),
+    CapturedVar(Symbol),
+    ArrayElem(usize),
+    TupleElem(usize),
+    Deref,
+    EnumTag,
+    GeneratorTag,
+    DynDowncast,
+}
+
+pub type ValidationMsg = String;
+
+#[derive(Debug, Clone)]
+pub struct ValidationFailureInfo {
+    pub message: ValidationMsg,
+    /// The full path of the nesting, only present in the innermost frame.
+    pub innermost_full_path: Option<String>,
+    pub current_path: Option<ValidationPathInfo>,
+    pub cause: Option<Box<ValidationFailureInfo>>,
+}
+
 /// Error information for when the program caused Undefined Behavior.
 pub enum UndefinedBehaviorInfo {
     /// Free-form case. Only for errors that are never caught!
@@ -258,8 +290,7 @@ pub enum UndefinedBehaviorInfo {
     ValidationFailure {
         /// The "path" to the value in question, e.g. `.0[5].field` for a struct
         /// field in the 6th element of an array that is the first element of a tuple.
-        path: Option<String>,
-        msg: String,
+        info: ValidationFailureInfo,
     },
     /// Using a non-boolean `u8` as bool.
     InvalidBool(u8),
@@ -335,11 +366,8 @@ impl fmt::Display for UndefinedBehaviorInfo {
             WriteToReadOnly(a) => write!(f, "writing to {a:?} which is read-only"),
             DerefFunctionPointer(a) => write!(f, "accessing {a:?} which contains a function"),
             DerefVTablePointer(a) => write!(f, "accessing {a:?} which contains a vtable"),
-            ValidationFailure { path: None, msg } => {
-                write!(f, "constructing invalid value: {msg}")
-            }
-            ValidationFailure { path: Some(path), msg } => {
-                write!(f, "constructing invalid value at {path}: {msg}")
+            ValidationFailure { info } => {
+                write!(f, "constructing invalid value: {info:?}")
             }
             InvalidBool(b) => {
                 write!(f, "interpreting an invalid 8-bit value as a bool: 0x{b:02x}")

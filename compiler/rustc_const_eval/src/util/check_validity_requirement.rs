@@ -40,6 +40,7 @@ pub fn check_validity_requirement<'tcx>(
 
 /// Implements the 'strict' version of the `might_permit_raw_init` checks; see that function for
 /// details.
+#[instrument(skip(tcx), ret)]
 fn might_permit_raw_init_strict<'tcx>(
     ty: TyAndLayout<'tcx>,
     tcx: TyCtxt<'tcx>,
@@ -71,7 +72,9 @@ fn might_permit_raw_init_strict<'tcx>(
     // This does *not* actually check that references are dereferenceable, but since all types that
     // require dereferenceability also require non-null, we don't actually get any false negatives
     // due to this.
-    Ok(cx.validate_operand(&ot).is_ok())
+    let result = cx.validate_operand(&ot);
+    debug!(?result);
+    Ok(result.is_ok())
 }
 
 /// Implements the 'lax' (default) version of the `might_permit_raw_init` checks; see that function for

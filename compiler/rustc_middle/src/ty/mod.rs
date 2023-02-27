@@ -1976,7 +1976,7 @@ pub enum VariantDiscr {
     Relative(u32),
 }
 
-#[derive(Debug, HashStable, TyEncodable, TyDecodable)]
+#[derive(Debug, Clone, Copy, HashStable, TyEncodable, TyDecodable)]
 pub struct FieldDef {
     pub did: DefId,
     pub name: Symbol,

@@ -9,13 +9,15 @@ use std::num::NonZeroUsize;
 
 use either::{Left, Right};
 
+use hir::def_id::DefId;
 use rustc_ast::Mutability;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir as hir;
-use rustc_middle::mir::interpret::InterpError;
+use rustc_middle::mir::interpret::{InterpError, ValidationFailureInfo, ValidationPathInfo};
 use rustc_middle::ty;
 use rustc_middle::ty::layout::{LayoutOf, TyAndLayout};
-use rustc_span::symbol::{sym, Symbol};
+use rustc_span::symbol::sym;
+use rustc_span::Span;
 use rustc_target::abi::{Abi, Scalar as ScalarAbi, Size, VariantIdx, Variants, WrappingRange};
 
 use std::hash::Hash;
@@ -29,12 +31,12 @@ use super::{
 
 macro_rules! throw_validation_failure {
     ($where:expr, { $( $what_fmt:tt )* } $( expected { $( $expected_fmt:tt )* } )?) => {{
-        let mut msg = String::new();
-        msg.push_str("encountered ");
-        write!(&mut msg, $($what_fmt)*).unwrap();
+        let mut message = String::new();
+        message.push_str("encountered ");
+        write!(&mut message, $($what_fmt)*).unwrap();
         $(
-            msg.push_str(", but expected ");
-            write!(&mut msg, $($expected_fmt)*).unwrap();
+            message.push_str(", but expected ");
+            write!(&mut message, $($expected_fmt)*).unwrap();
         )?
         let path = rustc_middle::ty::print::with_no_trimmed_paths!({
             let where_ = &$where;
@@ -46,7 +48,14 @@ macro_rules! throw_validation_failure {
                 None
             }
         });
-        throw_ub!(ValidationFailure { path, msg })
+        throw_ub!(ValidationFailure {
+            info: ValidationFailureInfo {
+                innermost_full_path: path,
+                current_path: None,
+                message,
+                cause: None,
+            },
+        })
     }};
 }
 
@@ -103,22 +112,9 @@ macro_rules! try_validation {
     }};
 }
 
-/// We want to show a nice path to the invalid field for diagnostics,
-/// but avoid string operations in the happy case where no error happens.
-/// So we track a `Vec<PathElem>` where `PathElem` contains all the data we
-/// need to later print something for the user.
-#[derive(Copy, Clone, Debug)]
-pub enum PathElem {
-    Field(Symbol),
-    Variant(Symbol),
-    GeneratorState(VariantIdx),
-    CapturedVar(Symbol),
-    ArrayElem(usize),
-    TupleElem(usize),
-    Deref,
-    EnumTag,
-    GeneratorTag,
-    DynDowncast,
+/// Call a nested validation method, adding context
+macro_rules! nested_validation {
+    () => {};
 }
 
 /// Extra things to check for during validation of CTFE results.
@@ -161,12 +157,12 @@ impl<T: Copy + Eq + Hash + std::fmt::Debug, PATH: Default> RefTracking<T, PATH> 
 }
 
 /// Format a path
-fn write_path(out: &mut String, path: &[PathElem]) {
-    use self::PathElem::*;
+fn write_path(out: &mut String, path: &[ValidationPathInfo]) {
+    use self::ValidationPathInfo::*;
 
     for elem in path.iter() {
         match elem {
-            Field(name) => write!(out, ".{}", name),
+            Field(def) => write!(out, ".{}", def.name),
             EnumTag => write!(out, ".<enum-tag>"),
             Variant(name) => write!(out, ".<enum-variant({})>", name),
             GeneratorTag => write!(out, ".<generator-tag>"),
@@ -209,22 +205,27 @@ struct ValidityVisitor<'rt, 'mir, 'tcx, M: Machine<'mir, 'tcx>> {
     /// The `path` may be pushed to, but the part that is present when a function
     /// starts must not be changed!  `visit_fields` and `visit_array` rely on
     /// this stack discipline.
-    path: Vec<PathElem>,
-    ref_tracking: Option<&'rt mut RefTracking<MPlaceTy<'tcx, M::Provenance>, Vec<PathElem>>>,
+    path: Vec<ValidationPathInfo>,
+    ref_tracking:
+        Option<&'rt mut RefTracking<MPlaceTy<'tcx, M::Provenance>, Vec<ValidationPathInfo>>>,
     /// `None` indicates this is not validating for CTFE (but for runtime).
     ctfe_mode: Option<CtfeValidationMode>,
     ecx: &'rt InterpCx<'mir, 'tcx, M>,
 }
 
 impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValidityVisitor<'rt, 'mir, 'tcx, M> {
-    fn aggregate_field_path_elem(&mut self, layout: TyAndLayout<'tcx>, field: usize) -> PathElem {
+    fn aggregate_field_path_elem(
+        &mut self,
+        layout: TyAndLayout<'tcx>,
+        field: usize,
+    ) -> ValidationPathInfo {
         // First, check if we are projecting to a variant.
         match layout.variants {
             Variants::Multiple { tag_field, .. } => {
                 if tag_field == field {
                     return match layout.ty.kind() {
-                        ty::Adt(def, ..) if def.is_enum() => PathElem::EnumTag,
-                        ty::Generator(..) => PathElem::GeneratorTag,
+                        ty::Adt(def, ..) if def.is_enum() => ValidationPathInfo::EnumTag,
+                        ty::Generator(..) => ValidationPathInfo::GeneratorTag,
                         _ => bug!("non-variant type {:?}", layout.ty),
                     };
                 }
@@ -256,14 +257,14 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValidityVisitor<'rt, 'mir, '
                     }
                 }
 
-                PathElem::CapturedVar(name.unwrap_or_else(|| {
+                ValidationPathInfo::CapturedVar(name.unwrap_or_else(|| {
                     // Fall back to showing the field index.
                     sym::integer(field)
                 }))
             }
 
             // tuples
-            ty::Tuple(_) => PathElem::TupleElem(field),
+            ty::Tuple(_) => ValidationPathInfo::TupleElem(field),
 
             // enums
             ty::Adt(def, ..) if def.is_enum() => {
@@ -271,20 +272,20 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValidityVisitor<'rt, 'mir, '
                 match layout.variants {
                     Variants::Single { index } => {
                         // Inside a variant
-                        PathElem::Field(def.variant(index).fields[field].name)
+                        ValidationPathInfo::Field(def.variant(index).fields[field])
                     }
                     Variants::Multiple { .. } => bug!("we handled variants above"),
                 }
             }
 
             // other ADTs
-            ty::Adt(def, _) => PathElem::Field(def.non_enum_variant().fields[field].name),
+            ty::Adt(def, _) => ValidationPathInfo::Field(def.non_enum_variant().fields[field]),
 
             // arrays/slices
-            ty::Array(..) | ty::Slice(..) => PathElem::ArrayElem(field),
+            ty::Array(..) | ty::Slice(..) => ValidationPathInfo::ArrayElem(field),
 
             // dyn traits
-            ty::Dynamic(..) => PathElem::DynDowncast,
+            ty::Dynamic(..) => ValidationPathInfo::DynDowncast,
 
             // nothing else has an aggregate layout
             _ => bug!("aggregate_field_path_elem: got non-aggregate type {:?}", layout.ty),
@@ -293,7 +294,7 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValidityVisitor<'rt, 'mir, '
 
     fn with_elem<R>(
         &mut self,
-        elem: PathElem,
+        elem: ValidationPathInfo,
         f: impl FnOnce(&mut Self) -> InterpResult<'tcx, R>,
     ) -> InterpResult<'tcx, R> {
         // Remember the old state
@@ -479,7 +480,7 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValidityVisitor<'rt, 'mir, '
                 // with enough space for the additional `Deref`.
                 let mut new_path = Vec::with_capacity(path.len() + 1);
                 new_path.extend(path);
-                new_path.push(PathElem::Deref);
+                new_path.push(ValidationPathInfo::Deref);
                 new_path
             });
         }
@@ -681,7 +682,7 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValueVisitor<'mir, 'tcx, M>
         &mut self,
         op: &OpTy<'tcx, M::Provenance>,
     ) -> InterpResult<'tcx, VariantIdx> {
-        self.with_elem(PathElem::EnumTag, move |this| {
+        self.with_elem(ValidationPathInfo::EnumTag, move |this| {
             Ok(try_validation!(
                 this.ecx.read_discriminant(op),
                 this.path,
@@ -702,7 +703,22 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValueVisitor<'mir, 'tcx, M>
         new_op: &OpTy<'tcx, M::Provenance>,
     ) -> InterpResult<'tcx> {
         let elem = self.aggregate_field_path_elem(old_op.layout, field);
-        self.with_elem(elem, move |this| this.visit_value(new_op))
+        match self.with_elem(elem, move |this| this.visit_value(new_op)) {
+            Ok(()) => Ok(()),
+            Err(e) => match e.kind() {
+                InterpError::UndefinedBehavior(ValidationFailure { info }) => {
+                    throw_ub!(ValidationFailure {
+                        info: ValidationFailureInfo {
+                            innermost_full_path: None,
+                            current_path: Some(elem),
+                            message: "uwu".into(),
+                            cause: Some(Box::new(info.clone())),
+                        },
+                    })
+                }
+                _ => Err(e),
+            },
+        }
     }
 
     #[inline]
@@ -713,9 +729,9 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValueVisitor<'mir, 'tcx, M>
         new_op: &OpTy<'tcx, M::Provenance>,
     ) -> InterpResult<'tcx> {
         let name = match old_op.layout.ty.kind() {
-            ty::Adt(adt, _) => PathElem::Variant(adt.variant(variant_id).name),
+            ty::Adt(adt, _) => ValidationPathInfo::Variant(adt.variant(variant_id).name),
             // Generators also have variants
-            ty::Generator(..) => PathElem::GeneratorState(variant_id),
+            ty::Generator(..) => ValidationPathInfo::GeneratorState(variant_id),
             _ => bug!("Unexpected type with variant: {:?}", old_op.layout.ty),
         };
         self.with_elem(name, move |this| this.visit_value(new_op))
@@ -886,7 +902,7 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValueVisitor<'mir, 'tcx, M>
                                     access.uninit.start.bytes() / layout.size.bytes(),
                                 )
                                 .unwrap();
-                                self.path.push(PathElem::ArrayElem(i));
+                                self.path.push(ValidationPathInfo::ArrayElem(i));
 
                                 throw_validation_failure!(self.path, { "uninitialized bytes" })
                             }
@@ -913,11 +929,14 @@ impl<'rt, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> ValueVisitor<'mir, 'tcx, M>
 }
 
 impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
+    #[instrument(skip(self, ref_tracking, ctfe_mode), ret)]
     fn validate_operand_internal(
         &self,
         op: &OpTy<'tcx, M::Provenance>,
-        path: Vec<PathElem>,
-        ref_tracking: Option<&mut RefTracking<MPlaceTy<'tcx, M::Provenance>, Vec<PathElem>>>,
+        path: Vec<ValidationPathInfo>,
+        ref_tracking: Option<
+            &mut RefTracking<MPlaceTy<'tcx, M::Provenance>, Vec<ValidationPathInfo>>,
+        >,
         ctfe_mode: Option<CtfeValidationMode>,
     ) -> InterpResult<'tcx> {
         trace!("validate_operand_internal: {:?}, {:?}", *op, op.layout.ty);
@@ -955,8 +974,8 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
     pub fn const_validate_operand(
         &self,
         op: &OpTy<'tcx, M::Provenance>,
-        path: Vec<PathElem>,
-        ref_tracking: &mut RefTracking<MPlaceTy<'tcx, M::Provenance>, Vec<PathElem>>,
+        path: Vec<ValidationPathInfo>,
+        ref_tracking: &mut RefTracking<MPlaceTy<'tcx, M::Provenance>, Vec<ValidationPathInfo>>,
         ctfe_mode: CtfeValidationMode,
     ) -> InterpResult<'tcx> {
         self.validate_operand_internal(op, path, Some(ref_tracking), Some(ctfe_mode))
