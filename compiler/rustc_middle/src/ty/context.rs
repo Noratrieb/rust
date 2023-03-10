@@ -2440,6 +2440,19 @@ impl<'tcx> TyCtxt<'tcx> {
     pub fn trait_solver_next(self) -> bool {
         self.sess.opts.unstable_opts.trait_solver == rustc_session::config::TraitSolver::Next
     }
+
+    pub fn all_stripped_out_item_names(
+        self,
+    ) -> impl Iterator<Item = (Ident, ast::MetaItem)> + 'tcx {
+        self.stripped_out_item_names(LOCAL_CRATE)
+            .into_iter()
+            .chain(
+                self.crates(())
+                    .into_iter()
+                    .flat_map(move |&cnum| self.stripped_out_item_names(cnum)),
+            )
+            .cloned()
+    }
 }
 
 impl<'tcx> TyCtxtAt<'tcx> {

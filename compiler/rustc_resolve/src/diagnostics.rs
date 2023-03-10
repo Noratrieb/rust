@@ -1,5 +1,6 @@
 use std::ptr;
 
+use ast::MetaItemKind;
 use rustc_ast::ptr::P;
 use rustc_ast::visit::{self, Visitor};
 use rustc_ast::{self as ast, Crate, ItemKind, ModKind, NodeId, Path, CRATE_NODE_ID};
@@ -150,6 +151,26 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
             } else {
                 (None, FoundUse::No)
             };
+
+            {
+                let last = path.last().unwrap().ident.name;
+                let mut symbols = self.tcx.all_stripped_out_item_names();
+                if let Some((ident, meta_item)) = symbols.find(|(ident, _)| ident.name == last) {
+                    debug!(?ident, ?meta_item, "Found stripped out name");
+
+                    err.span_note(ident.span, &format!("found an item that was stripped by a cfg"));
+
+                    match meta_item.kind {
+                        MetaItemKind::NameValue(lit)
+                            if meta_item.path.segments.last().unwrap().ident.name
+                                == sym::feature =>
+                        {
+                            err.help(format!("add the `{}` feature to Cargo.toml", lit.symbol));
+                        }
+                        _ => {}
+                    }
+                }
+            }
 
             if !candidates.is_empty() {
                 show_candidates(

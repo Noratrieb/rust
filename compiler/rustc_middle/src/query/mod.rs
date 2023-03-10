@@ -2218,4 +2218,11 @@ rustc_queries! {
     query check_tys_might_be_eq(arg: Canonical<'tcx, (ty::ParamEnv<'tcx>, Ty<'tcx>, Ty<'tcx>)>) -> Result<(), NoSolution> {
         desc { "check whether two const param are definitely not equal to eachother"}
     }
+
+    /// lol
+    query stripped_out_item_names(cnum: CrateNum) -> &'tcx [(Ident, ast::MetaItem)] {
+        feedable
+        desc { "getting cfg-ed out item names" }
+        separate_provide_extern
+    }
 }

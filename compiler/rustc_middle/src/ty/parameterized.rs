@@ -71,6 +71,7 @@ trivially_parameterized_over_tcx! {
     ty::fast_reject::SimplifiedType,
     rustc_ast::Attribute,
     rustc_ast::DelimArgs,
+    rustc_ast::MetaItem,
     rustc_attr::ConstStability,
     rustc_attr::DefaultBodyStability,
     rustc_attr::Deprecation,

@@ -211,6 +211,9 @@ pub struct Session {
 
     /// Set of enabled features for the current target, including unstable ones.
     pub unstable_target_features: FxIndexSet<Symbol>,
+
+    /// Item names that were cfged out. I do not like this here at all. aaaaa
+    pub stripped_out_items: Lock<Vec<(Symbol, Symbol)>>,
 }
 
 pub struct PerfStats {
@@ -1490,6 +1493,7 @@ pub fn build_session(
         asm_arch,
         target_features: Default::default(),
         unstable_target_features: Default::default(),
+        stripped_out_items: Default::default(),
     };
 
     validate_commandline_args_with_session_available(&sess);

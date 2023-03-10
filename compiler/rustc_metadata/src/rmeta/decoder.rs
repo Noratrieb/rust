@@ -961,6 +961,10 @@ impl<'a, 'tcx> CrateMetadataRef<'a> {
         )
     }
 
+    fn get_stripped_out_item_names(self, tcx: TyCtxt<'tcx>) -> &'tcx [(Ident, ast::MetaItem)] {
+        tcx.arena.alloc_from_iter(self.root.stripped_out_item_names.decode(self))
+    }
+
     /// Iterates over the diagnostic items in the given crate.
     fn get_diagnostic_items(self) -> DiagnosticItems {
         let mut id_to_name = FxHashMap::default();

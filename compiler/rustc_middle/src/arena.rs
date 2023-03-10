@@ -118,6 +118,7 @@ macro_rules! arena_types {
             [] external_constraints: rustc_middle::traits::solve::ExternalConstraintsData<'tcx>,
             [decode] doc_link_resolutions: rustc_hir::def::DocLinkResMap,
             [] closure_kind_origin: (rustc_span::Span, rustc_middle::hir::place::Place<'tcx>),
+            [] stripped_out_item_names: (rustc_span::symbol::Ident, rustc_ast::MetaItem),
         ]);
     )
 }

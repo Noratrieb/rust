@@ -591,6 +591,9 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
             (self.encode_lang_items(), self.encode_lang_items_missing())
         });
 
+        let stripped_out_item_names =
+            stat!("stripped-out-item-names", || self.encode_stripped_out_item_names());
+
         let diagnostic_items = stat!("diagnostic-items", || self.encode_diagnostic_items());
 
         let native_libraries = stat!("native-libs", || self.encode_native_libraries());
@@ -701,6 +704,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
                 lang_items,
                 diagnostic_items,
                 lang_items_missing,
+                stripped_out_item_names,
                 native_libraries,
                 foreign_modules,
                 source_map,
@@ -1835,6 +1839,11 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         empty_proc_macro!(self);
         let tcx = self.tcx;
         self.lazy_array(&tcx.lang_items().missing)
+    }
+
+    fn encode_stripped_out_item_names(&mut self) -> LazyArray<(Ident, ast::MetaItem)> {
+        let names = self.tcx.stripped_out_item_names(LOCAL_CRATE);
+        self.lazy_array(names)
     }
 
     fn encode_traits(&mut self) -> LazyArray<DefIndex> {

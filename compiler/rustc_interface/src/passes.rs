@@ -255,6 +255,9 @@ fn configure_and_expand(mut krate: ast::Crate, resolver: &mut Resolver<'_, '_>) 
             unreachable!();
         }
 
+        tcx.feed_local_crate()
+            .stripped_out_item_names(tcx.arena.alloc_from_iter(ecx.stripped_out_items));
+
         if cfg!(windows) {
             env::set_var("PATH", &old_path);
         }

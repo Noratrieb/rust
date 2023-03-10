@@ -4,6 +4,7 @@ use crate::errors;
 use crate::expand::{self, AstFragment, Invocation};
 use crate::module::DirOwnership;
 
+use ast::MetaItem;
 use rustc_ast::attr::MarkedAttrs;
 use rustc_ast::mut_visit::DummyAstNode;
 use rustc_ast::ptr::P;
@@ -1020,6 +1021,9 @@ pub struct ExtCtxt<'a> {
     /// in the AST, but insert it here so that we know
     /// not to expand it again.
     pub(super) expanded_inert_attrs: MarkedAttrs,
+
+    /// Names of items that were stripped out via cfg with their corresponding cfg meta item.
+    pub stripped_out_items: Vec<(Ident, MetaItem)>,
 }
 
 impl<'a> ExtCtxt<'a> {
@@ -1049,6 +1053,7 @@ impl<'a> ExtCtxt<'a> {
             expansions: FxIndexMap::default(),
             expanded_inert_attrs: MarkedAttrs::new(),
             buffered_early_lint: vec![],
+            stripped_out_items: vec![],
         }
     }
 
