@@ -15,6 +15,7 @@ use rustc_middle::middle::exported_symbols::ExportedSymbol;
 use rustc_middle::middle::stability::DeprecationEntry;
 use rustc_middle::ty::fast_reject::SimplifiedType;
 use rustc_middle::ty::query::{ExternProviders, Providers};
+use rustc_middle::ty::UnusedGenericParams;
 use rustc_middle::ty::{self, TyCtxt};
 use rustc_session::cstore::CrateStore;
 use rustc_session::{Session, StableCrateId};
@@ -72,6 +73,13 @@ impl ProcessQueryValue<'_, Option<DeprecationEntry>> for Option<Deprecation> {
     #[inline(always)]
     fn process_decoded(self, _tcx: TyCtxt<'_>, _err: impl Fn() -> !) -> Option<DeprecationEntry> {
         self.map(DeprecationEntry::external)
+    }
+}
+
+impl ProcessQueryValue<'_, UnusedGenericParams> for UnusedGenericParams {
+    #[inline(always)]
+    fn process_decoded(self, _tcx: TyCtxt<'_>, _err: impl Fn() -> !) -> UnusedGenericParams {
+        self
     }
 }
 
@@ -226,7 +234,7 @@ provide! { tcx, def_id, other, cdata,
     lookup_default_body_stability => { table }
     lookup_deprecation_entry => { table }
     params_in_repr => { table }
-    unused_generic_params => { cdata.root.tables.unused_generic_params.get(cdata, def_id.index) }
+    unused_generic_params => { table_direct }
     opt_def_kind => { table_direct }
     impl_parent => { table }
     impl_polarity => { table_direct }
