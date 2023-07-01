@@ -543,7 +543,7 @@ def write_config_toml(writer, section_order, targets, sections):
             writer = write_uncommented(sections[section], writer)
 
 def quit_if_file_exists(file):
-    if os.path.isfile(file):
+    if False and os.path.isfile(file):
         err("Existing '" + file + "' detected.")
 
 if __name__ == "__main__":

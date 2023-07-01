@@ -212,18 +212,15 @@ else
   args="$args --volume $root_dir:/checkout:ro"
   args="$args --volume $objdir:/checkout/obj"
   args="$args --volume $HOME/.cargo:/cargo"
-  args="$args --volume $HOME/rustsrc:$HOME/rustsrc"
+  args="$args --volume $HOME/projects/rust:$HOME/rustsrc"
   args="$args --volume /tmp/toolstate:/tmp/toolstate"
 
   id=$(id -u)
-  if [[ "$id" != 0 && "$(docker -v)" =~ ^podman ]]; then
     # Rootless podman creates a separate user namespace, where an inner
     # LOCAL_USER_ID will map to a different subuid range on the host.
     # The "keep-id" mode maps the current UID directly into the container.
     args="$args --env NO_CHANGE_USER=1 --userns=keep-id"
-  else
-    args="$args --env LOCAL_USER_ID=$id"
-  fi
+
 fi
 
 if [ "$dev" = "1" ]
@@ -264,6 +261,7 @@ docker \
   --env BASE_COMMIT="$BASE_COMMIT" \
   --env DIST_TRY_BUILD \
   --init \
+  -it \
   --rm \
   rust-ci \
   $command

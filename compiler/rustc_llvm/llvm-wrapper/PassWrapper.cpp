@@ -1,10 +1,12 @@
 #include <stdio.h>
-
+#include <iostream>
+#include <fstream>
 #include <vector>
 #include <set>
 
 #include "LLVMWrapper.h"
 
+#include "llvm/Transforms/Utils/Debugify.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -499,6 +501,28 @@ LLVMRustWriteOutputFile(LLVMTargetMachineRef Target, LLVMPassManagerRef PMR,
                         LLVMRustFileType RustFileType) {
   llvm::legacy::PassManager *PM = unwrap<llvm::legacy::PassManager>(PMR);
   auto FileType = fromRust(RustFileType);
+
+  size_t len = strlen(Path) + 6;
+  char *DumpPath = (char*) malloc(len);
+  strcpy(DumpPath, Path);
+  strncat(DumpPath, ".dump", len);
+
+  StringRef DumpPathStr(DumpPath);
+  std::error_code DumpEC;
+  raw_fd_stream GoodOS(DumpPathStr, DumpEC);
+  if (DumpEC) {
+    auto Error = DumpEC.message();
+    if (Error != "") {
+      LLVMRustSetLastError(Error.c_str());
+      return LLVMRustResult::Failure;
+    }
+  }
+
+  DebugifyCustomPassManager Passes;
+  Passes.add(createPrintModulePass(GoodOS, "", false));
+  Passes.run(*unwrap(M));
+
+  free(DumpPath);
 
   std::string ErrorInfo;
   std::error_code EC;

@@ -121,7 +121,7 @@ fn main() {
                     .parent()
                     .unwrap()
                     .join(&target)
-                    .join("llvm/bin/llvm-config");
+                    .join("ci-llvm/bin/llvm-config");
                 if Command::new(&to_test).output().is_ok() {
                     return Some(to_test);
                 }

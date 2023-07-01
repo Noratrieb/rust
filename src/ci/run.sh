@@ -106,9 +106,8 @@ if [ "$DEPLOY$DEPLOY_ALT" = "1" ]; then
 else
   # We almost always want debug assertions enabled, but sometimes this takes too
   # long for too little benefit, so we just turn them off.
-  if [ "$NO_DEBUG_ASSERTIONS" = "" ]; then
     RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --enable-debug-assertions"
-  fi
+  
 
   # Same for overflow checks
   if [ "$NO_OVERFLOW_CHECKS" = "" ]; then
@@ -117,9 +116,8 @@ else
 
   # In general we always want to run tests with LLVM assertions enabled, but not
   # all platforms currently support that, so we have an option to disable.
-  if [ "$NO_LLVM_ASSERTIONS" = "" ]; then
     RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --enable-llvm-assertions"
-  fi
+  
 
   RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --set rust.verify-llvm-ir"
 
@@ -144,6 +142,8 @@ if [ "$RUST_RELEASE_CHANNEL" = "nightly" ] || [ "$DIST_REQUIRE_ALL_TOOLS" = "" ]
     RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --enable-missing-tools"
 fi
 
+RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --set rust.debug=true --set rust.debuginfo-level=1"
+
 # Unless we're using an older version of LLVM, check that all LLVM components
 # used by tests are available.
 if [ "$IS_NOT_LATEST_LLVM" = "" ]; then
@@ -162,14 +162,31 @@ datecheck() {
       | sed 's/Date: //g' || true
   echo "== end clock drift check =="
 }
+datecheck2() {
+  bash
+  echo "== clock drift check =="
+  echo -n "  local time: "
+  date
+  echo -n "  network time: "
+  curl -fs --head http://ci-caches.rust-lang.org | grep ^Date: \
+      | sed 's/Date: //g' || true
+  echo "== end clock drift check =="
+}
 datecheck
-trap datecheck EXIT
+trap datecheck2 EXIT
 
 # We've had problems in the past of shell scripts leaking fds into the sccache
 # server (#48192) which causes Cargo to erroneously think that a build script
 # hasn't finished yet. Try to solve that problem by starting a very long-lived
 # sccache server at the start of the build, but no need to worry if this fails.
 SCCACHE_IDLE_TIMEOUT=10800 sccache --start-server || true
+
+echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+whoami
+pwd
+ls -la
+ls -la ..
+echo "AAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 $SRC/configure $RUST_CONFIGURE_ARGS
 
@@ -187,13 +204,19 @@ else
     ncpus=$(grep processor /proc/cpuinfo | wc -l)
 fi
 
+# bash
+
 if [ ! -z "$SCRIPT" ]; then
-  sh -x -c "$SCRIPT"
+  sh -x -c "../x.py dist --host mips64-unknown-linux-gnuabi64 --target mips64-unknown-linux-gnuabi64 -vvv"
+  echo "exited shell script"
+  bash
 else
   do_make() {
     echo "make -j $ncpus $1"
     make -j $ncpus $1
     local retval=$?
+    echo "completed with $retval"
+    bash
     return $retval
   }
 
