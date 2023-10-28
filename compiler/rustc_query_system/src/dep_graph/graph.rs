@@ -714,9 +714,15 @@ impl<D: Deps> DepGraph<D> {
         &self,
         qcx: Qcx,
         dep_node: &DepNode,
-    ) -> Option<(SerializedDepNodeIndex, DepNodeIndex)> {
-        self.data().and_then(|data| data.try_mark_green(qcx, dep_node))
+    ) -> TryMarkGreen {
+        self.data().map(|data| data.try_mark_green(qcx, dep_node)).unwrap_or(TryMarkGreen::Cannot)
     }
+}
+
+pub enum TryMarkGreen {
+    Cannot,
+    Red(/* cause: */ Vec<DepNode>),
+    Green(SerializedDepNodeIndex, DepNodeIndex),
 }
 
 impl<D: Deps> DepGraphData<D> {
@@ -729,22 +735,28 @@ impl<D: Deps> DepGraphData<D> {
         &self,
         qcx: Qcx,
         dep_node: &DepNode,
-    ) -> Option<(SerializedDepNodeIndex, DepNodeIndex)> {
+    ) -> TryMarkGreen {
         debug_assert!(!qcx.dep_context().is_eval_always(dep_node.kind));
 
         // Return None if the dep node didn't exist in the previous session
-        let prev_index = self.previous.node_to_index_opt(dep_node)?;
+        let Some(prev_index) = self.previous.node_to_index_opt(dep_node) else {
+            return TryMarkGreen::Cannot;
+        };
 
         match self.colors.get(prev_index) {
-            Some(DepNodeColor::Green(dep_node_index)) => Some((prev_index, dep_node_index)),
-            Some(DepNodeColor::Red) => None,
+            Some(DepNodeColor::Green(dep_node_index)) => {
+                TryMarkGreen::Green(prev_index, dep_node_index)
+            }
+            Some(DepNodeColor::Red) => TryMarkGreen::Red(vec![*dep_node]),
             None => {
                 // This DepNode and the corresponding query invocation existed
                 // in the previous compilation session too, so we can try to
                 // mark it as green by recursively marking all of its
                 // dependencies green.
-                self.try_mark_previous_green(qcx, prev_index, &dep_node, None)
-                    .map(|dep_node_index| (prev_index, dep_node_index))
+                match self.try_mark_previous_green(qcx, prev_index, &dep_node, None) {
+                    Ok(dep_node_index) => TryMarkGreen::Green(prev_index, dep_node_index),
+                    Err(cause) => TryMarkGreen::Red(cause),
+                }
             }
         }
     }
@@ -756,7 +768,7 @@ impl<D: Deps> DepGraphData<D> {
         parent_dep_node_index: SerializedDepNodeIndex,
         dep_node: &DepNode,
         frame: Option<&MarkFrame<'_>>,
-    ) -> Option<()> {
+    ) -> Result<(), Vec<DepNode>> {
         let dep_dep_node_color = self.colors.get(parent_dep_node_index);
         let dep_dep_node = &self.previous.index_to_node(parent_dep_node_index);
 
@@ -766,7 +778,7 @@ impl<D: Deps> DepGraphData<D> {
                 // still fine and can continue with checking the other
                 // dependencies.
                 debug!("dependency {dep_dep_node:?} was immediately green");
-                return Some(());
+                return Ok(());
             }
             Some(DepNodeColor::Red) => {
                 // We found a dependency the value of which has changed
@@ -774,10 +786,12 @@ impl<D: Deps> DepGraphData<D> {
                 // mark the DepNode as green and also don't need to bother
                 // with checking any of the other dependencies.
                 debug!("dependency {dep_dep_node:?} was immediately red");
-                return None;
+                return Err(vec![*dep_dep_node]);
             }
             None => {}
         }
+
+        let mut causes = vec![*dep_dep_node];
 
         // We don't know the state of this dependency. If it isn't
         // an eval_always node, let's try to mark it green recursively.
@@ -790,9 +804,12 @@ impl<D: Deps> DepGraphData<D> {
             let node_index =
                 self.try_mark_previous_green(qcx, parent_dep_node_index, dep_dep_node, frame);
 
-            if node_index.is_some() {
+            if node_index.is_ok() {
                 debug!("managed to MARK dependency {dep_dep_node:?} as green",);
-                return Some(());
+                return Ok(());
+            } else {
+                causes = node_index.unwrap_err();
+                causes.push(*dep_dep_node);
             }
         }
 
@@ -801,7 +818,7 @@ impl<D: Deps> DepGraphData<D> {
         if !qcx.dep_context().try_force_from_dep_node(*dep_dep_node, frame) {
             // The DepNode could not be forced.
             debug!("dependency {dep_dep_node:?} could not be forced");
-            return None;
+            return Err(causes);
         }
 
         let dep_dep_node_color = self.colors.get(parent_dep_node_index);
@@ -809,11 +826,11 @@ impl<D: Deps> DepGraphData<D> {
         match dep_dep_node_color {
             Some(DepNodeColor::Green(_)) => {
                 debug!("managed to FORCE dependency {dep_dep_node:?} to green");
-                return Some(());
+                return Ok(());
             }
             Some(DepNodeColor::Red) => {
                 debug!("dependency {dep_dep_node:?} was red after forcing",);
-                return None;
+                return Err(causes);
             }
             None => {}
         }
@@ -833,7 +850,7 @@ impl<D: Deps> DepGraphData<D> {
         // incremental compilation cache because of
         // compilation errors being present.
         debug!("dependency {dep_dep_node:?} resulted in compilation error",);
-        return None;
+        return Err(causes);
     }
 
     /// Try to mark a dep-node which existed in the previous compilation session as green.
@@ -844,7 +861,7 @@ impl<D: Deps> DepGraphData<D> {
         prev_dep_node_index: SerializedDepNodeIndex,
         dep_node: &DepNode,
         frame: Option<&MarkFrame<'_>>,
-    ) -> Option<DepNodeIndex> {
+    ) -> Result<DepNodeIndex, Vec<DepNode>> {
         let frame = MarkFrame { index: prev_dep_node_index, parent: frame };
 
         #[cfg(not(parallel_compiler))]
@@ -902,7 +919,7 @@ impl<D: Deps> DepGraphData<D> {
         self.colors.insert(prev_dep_node_index, DepNodeColor::Green(dep_node_index));
 
         debug!("successfully marked {dep_node:?} as green");
-        Some(dep_node_index)
+        Ok(dep_node_index)
     }
 
     /// Atomically emits some loaded diagnostics.

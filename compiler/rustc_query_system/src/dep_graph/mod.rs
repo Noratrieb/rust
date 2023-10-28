@@ -22,6 +22,8 @@ use std::panic;
 
 use self::graph::{print_markframe_trace, MarkFrame};
 
+pub use graph::TryMarkGreen;
+
 pub trait DepContext: Copy {
     type Deps: Deps;
 

@@ -3,7 +3,7 @@
 //! manage the caches, and so forth.
 
 use crate::dep_graph::DepGraphData;
-use crate::dep_graph::{DepContext, DepNode, DepNodeIndex, DepNodeParams};
+use crate::dep_graph::{DepContext, DepNode, DepNodeIndex, DepNodeParams, TryMarkGreen};
 use crate::ich::StableHashingContext;
 use crate::query::caches::QueryCache;
 #[cfg(parallel_compiler)]
@@ -563,7 +563,32 @@ where
     // Note this function can be called concurrently from the same query
     // We must ensure that this is handled correctly.
 
-    let (prev_dep_node_index, dep_node_index) = dep_graph_data.try_mark_green(qcx, &dep_node)?;
+    let projections = [
+        "visibility",
+        "expn_that_defined",
+        "maybe_unused_trait_imports",
+        "hir_owner",
+        "hir_owner_nodes",
+        "hir_attrs",
+        "opt_local_def_id_to_hir_id",
+        "opt_def_kind",
+        "hir_owner_parent",
+        "in_scope_traits_map",
+        "used_trait_imports",
+    ];
+
+    let idx = dep_graph_data.try_mark_green(qcx, &dep_node);
+    let (prev_dep_node_index, dep_node_index) = match idx {
+        TryMarkGreen::Cannot => return None,
+        TryMarkGreen::Red(mut cause) => {
+            if !query.eval_always() && !projections.contains(&query.name()) {
+                cause.reverse();
+                eprintln!("RED: {:100} --- because {cause:?}", format!("{dep_node:?}"));
+            }
+            return None;
+        }
+        TryMarkGreen::Green(a, b) => (a, b),
+    };
 
     debug_assert!(dep_graph_data.is_index_green(prev_dep_node_index));
 
@@ -757,7 +782,7 @@ where
 
     let dep_graph = qcx.dep_context().dep_graph();
     let serialized_dep_node_index = match dep_graph.try_mark_green(qcx, &dep_node) {
-        None => {
+        TryMarkGreen::Cannot | TryMarkGreen::Red(_) => {
             // A None return from `try_mark_green` means that this is either
             // a new dep node or that the dep node has already been marked red.
             // Either way, we can't call `dep_graph.read()` as we don't have the
@@ -766,7 +791,7 @@ where
             // in-memory cache, or another query down the line will.
             return (true, Some(dep_node));
         }
-        Some((serialized_dep_node_index, dep_node_index)) => {
+        TryMarkGreen::Green(serialized_dep_node_index, dep_node_index) => {
             dep_graph.read_index(dep_node_index);
             qcx.dep_context().profiler().query_cache_hit(dep_node_index.into());
             serialized_dep_node_index

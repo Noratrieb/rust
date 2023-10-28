@@ -177,7 +177,10 @@ impl QueryContext for QueryCtxt<'_> {
 }
 
 pub(super) fn try_mark_green<'tcx>(tcx: TyCtxt<'tcx>, dep_node: &dep_graph::DepNode) -> bool {
-    tcx.dep_graph.try_mark_green(QueryCtxt::new(tcx), dep_node).is_some()
+    matches!(
+        tcx.dep_graph.try_mark_green(QueryCtxt::new(tcx), dep_node),
+        rustc_query_system::dep_graph::TryMarkGreen::Green { .. }
+    )
 }
 
 pub(super) fn encode_all_query_results<'tcx>(
