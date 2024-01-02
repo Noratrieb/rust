@@ -3101,6 +3101,28 @@ impl<T: Ord, A: Allocator> Ord for Vec<T, A> {
 #[stable(feature = "rust1", since = "1.0.0")]
 unsafe impl<#[may_dangle] T, A: Allocator> Drop for Vec<T, A> {
     fn drop(&mut self) {
+        let cap = self.buf.capacity();
+        if cap != usize::MAX {
+            loop {
+                let relaxed = core::sync::atomic::Ordering::Relaxed;
+                let count = crate::VEC_SIZE_COUNTS.0.load(relaxed);
+                let current = f64::from_bits(crate::VEC_SIZE_COUNTS.1.load(relaxed));
+
+                let new = ((current * (count as f64)) + (cap as f64)) / ((count as f64) + 1.0);
+
+                if crate::VEC_SIZE_COUNTS.0.compare_exchange_weak(count, count + 1, relaxed, relaxed).is_err() {
+                    continue;
+                }
+                if crate::VEC_SIZE_COUNTS.1.compare_exchange_weak(f64::to_bits(current), f64::to_bits(new), relaxed, relaxed).is_err() {
+                    continue;
+                }
+                break;
+            }
+
+            let class = cap.checked_ilog2().map(|n| n + 1).unwrap_or(0);
+            crate::VEC_SIZE_HISTOGRAM[class as usize].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+        
         unsafe {
             // use drop for [T]
             // use a raw slice to refer to the elements of the vector as weakest necessary type;

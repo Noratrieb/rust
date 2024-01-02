@@ -209,6 +209,8 @@
 // from other crates, but since this can only appear for lang items, it doesn't seem worth fixing.
 #![feature(intra_doc_pointers)]
 
+use core::sync::atomic::AtomicU64;
+
 // Allow testing this library
 #[cfg(test)]
 #[macro_use]
@@ -278,4 +280,18 @@ pub(crate) mod test_helpers {
         let seed: [u8; 16] = seed_vec.as_slice().try_into().unwrap();
         rand::SeedableRng::from_seed(seed)
     }
+}
+
+/// histogram of vec sizes on drop
+#[unstable(feature = "hack_vec_shit", issue = "none", reason = "funny")]
+pub static VEC_SIZE_HISTOGRAM: [AtomicU64; 64] = unsafe { core::mem::zeroed() };
+
+/// (total_drops, current_avg_size (actually a f64))
+#[unstable(feature = "hack_vec_shit", issue = "none", reason = "funny")]
+static VEC_SIZE_COUNTS: (AtomicU64, AtomicU64) = (AtomicU64::new(0), AtomicU64::new(0));
+
+/// does stuff
+#[unstable(feature = "hack_vec_shit", issue = "none", reason = "funny")]
+pub fn get_avg_vec_size() -> f64 {
+    f64::from_bits(VEC_SIZE_COUNTS.1.load(core::sync::atomic::Ordering::Relaxed))
 }

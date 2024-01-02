@@ -15,6 +15,7 @@
 #![recursion_limit = "256"]
 #![deny(rustc::untranslatable_diagnostic)]
 #![deny(rustc::diagnostic_outside_of_impl)]
+#![feature(hack_vec_shit)]
 
 #[macro_use]
 extern crate tracing;
@@ -1514,6 +1515,9 @@ pub fn main() -> ! {
         let end_rss = get_resident_set_size();
         print_time_passes_entry("total", start_time.elapsed(), start_rss, end_rss, format);
     }
+
+    extern crate alloc;
+    eprintln!("{:?}", &alloc::VEC_SIZE_HISTOGRAM);
 
     process::exit(exit_code)
 }
