@@ -214,6 +214,59 @@ pub struct HashMap<K, V, S = RandomState> {
     base: base::HashMap<K, V, S>,
 }
 
+use core::sync::atomic;
+
+fn profile<K, V>(map: &HashMap<K, V, impl Sized>) {
+    let cap = map.capacity();
+    if cap != usize::MAX {
+        let elem = cap * core::mem::size_of::<(K, V)>();
+
+        if cap > 100_000 && (true || am_i_georg()) {
+            /*
+            let bt = crate::backtrace::Backtrace::force_capture();
+            eprintln!("BACKTRACE START: {}", bt.frames()[0..core::cmp::min(7, bt.frames().len())].iter().map(|frame| format!("{frame:?}")).collect::<Vec<_>>().join("\nBACKTRACE: "));
+            */
+            let name = core::any::type_name::<(K, V)>();
+            eprintln!("TYPENAME {name}");
+        }
+
+        loop {
+            let relaxed = core::sync::atomic::Ordering::Relaxed;
+            let count = crate::VEC_SIZE_COUNTS.0.load(relaxed);
+            let current = f64::from_bits(crate::VEC_SIZE_COUNTS.1.load(relaxed));
+
+            let new = ((current * (count as f64)) + (elem as f64)) / ((count as f64) + 1.0);
+
+            if crate::VEC_SIZE_COUNTS
+                .0
+                .compare_exchange_weak(count, count + 1, relaxed, relaxed)
+                .is_err()
+            {
+                continue;
+            }
+            if crate::VEC_SIZE_COUNTS
+                .1
+                .compare_exchange_weak(f64::to_bits(current), f64::to_bits(new), relaxed, relaxed)
+                .is_err()
+            {
+                continue;
+            }
+            break;
+        }
+
+        let class = elem.checked_ilog2().map(|n| n + 1).unwrap_or(0);
+        crate::VEC_SIZE_HISTOGRAM[class as usize]
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[stable(feature = "rust1", since = "1.0.0")]
+unsafe impl<#[may_dangle] K, #[may_dangle] V, #[may_dangle] S> Drop for HashMap<K, V, S> {
+    fn drop(&mut self) {
+        profile(self);
+    }
+}
+
 impl<K, V> HashMap<K, V, RandomState> {
     /// Creates an empty `HashMap`.
     ///
@@ -279,8 +332,7 @@ impl<K, V, S> HashMap<K, V, S> {
     /// ```
     #[inline]
     #[stable(feature = "hashmap_build_hasher", since = "1.7.0")]
-    #[rustc_const_unstable(feature = "const_collections_with_hasher", issue = "102575")]
-    pub const fn with_hasher(hash_builder: S) -> HashMap<K, V, S> {
+    pub fn with_hasher(hash_builder: S) -> HashMap<K, V, S> {
         HashMap { base: base::HashMap::with_hasher(hash_builder) }
     }
 
@@ -1253,6 +1305,18 @@ where
     }
 }
 
+static AM_I_GEORG: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(437897453);
+
+fn am_i_georg() -> bool {
+    let mut x = AM_I_GEORG.load(core::sync::atomic::Ordering::Relaxed);
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    AM_I_GEORG.store(x, core::sync::atomic::Ordering::Relaxed);
+
+    x < (u32::MAX / (2 << 13))
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<K, V, S> Clone for HashMap<K, V, S>
 where
@@ -2216,7 +2280,10 @@ impl<K, V, S> IntoIterator for HashMap<K, V, S> {
     #[inline]
     #[rustc_lint_query_instability]
     fn into_iter(self) -> IntoIter<K, V> {
-        IntoIter { base: self.base.into_iter() }
+        profile(&self);
+        let s = core::mem::ManuallyDrop::new(self);
+        let base = unsafe { core::ptr::read(&s.base) };
+        IntoIter { base: base.into_iter() }
     }
 }
 

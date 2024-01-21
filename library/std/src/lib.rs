@@ -725,3 +725,19 @@ pub(crate) mod test_helpers {
         rand::SeedableRng::from_seed(seed)
     }
 }
+
+use core::sync::atomic::AtomicU64;
+
+/// histogram of vec sizes on drop
+#[unstable(feature = "hack_vec_shit", issue = "none", reason = "funny")]
+pub static VEC_SIZE_HISTOGRAM: [AtomicU64; 64] = unsafe { core::mem::zeroed() };
+
+/// (total_drops, current_avg_size (actually a f64))
+#[unstable(feature = "hack_vec_shit", issue = "none", reason = "funny")]
+static VEC_SIZE_COUNTS: (AtomicU64, AtomicU64) = (AtomicU64::new(0), AtomicU64::new(0));
+
+/// does stuff
+#[unstable(feature = "hack_vec_shit", issue = "none", reason = "funny")]
+pub fn get_avg_vec_size() -> f64 {
+    f64::from_bits(VEC_SIZE_COUNTS.1.load(core::sync::atomic::Ordering::Relaxed))
+}
