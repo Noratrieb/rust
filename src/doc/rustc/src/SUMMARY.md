@@ -15,6 +15,7 @@
 - [Platform Support](platform-support.md)
     - [Target Tier Policy](target-tier-policy.md)
     - [Template for Target-specific Documentation](platform-support/TEMPLATE.md)
+    - [Targets](platform-support/targets.md)
     - [arm64e-apple-ios.md](platform-support/arm64e-apple-ios.md)
     - [arm64e-apple-darwin.md](platform-support/arm64e-apple-darwin.md)
     - [aarch64-apple-ios-sim](platform-support/aarch64-apple-ios-sim.md)

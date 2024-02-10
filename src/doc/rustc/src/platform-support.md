@@ -32,6 +32,13 @@ All tier 1 targets with host tools support the full standard library.
 
 target | notes
 -------|-------
+<!-- TIER1HOST SECTION START -->
+[`i686-pc-windows-gnu`](platform-support/targets/i686-pc-windows-gnu.md) | 32-bit MinGW (Windows 7+) [^x86_32-floats-return-ABI] [^windows-support]
+
+[^x86_32-floats-return-ABI]: Due to limitations of the C ABI, floating-point support on `i686` targets is non-compliant: floating-point return values are passed via an x87 register, so NaN payload bits can be lost. See [issue #114479][https://github.com/rust-lang/rust/issues/114479]. 
+
+[^windows-support]: Only Windows 10 currently undergoes automated testing. Earlier versions of Windows rely on testing and support from the community.
+<!-- TIER1HOST SECTION END -->
 `aarch64-unknown-linux-gnu` | ARM64 Linux (kernel 4.1, glibc 2.17+) [^missing-stack-probes]
 `i686-pc-windows-gnu` | 32-bit MinGW (Windows 7+) [^windows-support] [^x86_32-floats-return-ABI]
 `i686-pc-windows-msvc` | 32-bit MSVC (Windows 7+) [^windows-support] [^x86_32-floats-return-ABI]
@@ -92,6 +99,9 @@ so Rustup may install the documentation for a similar tier 1 target instead.
 
 target | notes
 -------|-------
+<!-- TIER2HOST SECTION START -->
+[`loongarch64-unknown-linux-gnu`](platform-support/targets/loongarch64-unknown-linux-gnu.md) | LoongArch64 Linux, LP64D ABI (kernel 5.19, glibc 2.36)
+<!-- TIER2HOST SECTION END -->
 `aarch64-apple-darwin` | ARM64 macOS (11.0+, Big Sur+)
 `aarch64-pc-windows-msvc` | ARM64 Windows MSVC
 `aarch64-unknown-linux-musl` | ARM64 Linux with MUSL
@@ -138,6 +148,10 @@ so Rustup may install the documentation for a similar tier 1 target instead.
 
 target | std | notes
 -------|:---:|-------
+<!-- TIER2 SECTION START -->
+[`aarch64-apple-tvos`](platform-support/targets/aarch64-apple-tvos.md) | ? | ARM64 tvOS
+[`x86_64-apple-tvos`](platform-support/targets/x86_64-apple-tvos.md) | ? | unknown
+<!-- TIER2 SECTION END -->
 `aarch64-apple-ios` | ✓ | ARM64 iOS
 [`aarch64-apple-ios-sim`](platform-support/aarch64-apple-ios-sim.md) | ✓ | Apple iOS Simulator on ARM64
 `aarch64-fuchsia` | ✓ | Alias for `aarch64-unknown-fuchsia`
@@ -234,6 +248,9 @@ host tools.
 
 target | std | host | notes
 -------|:---:|:----:|-------
+<!-- TIER3 SECTION START -->
+[`powerpc64-ibm-aix`](platform-support/targets/powerpc64-ibm-aix.md) | ? | ? | 64-bit AIX (7.2 and newer)
+<!-- TIER3 SECTION END -->
 [`arm64e-apple-ios`](platform-support/arm64e-apple-ios.md) | ✓ | | ARM64e Apple iOS
 [`arm64e-apple-darwin`](platform-support/arm64e-apple-darwin.md)  | ✓ | ✓ | ARM64e Apple Darwin
 `aarch64-apple-ios-macabi` | ? |  | Apple Catalyst on ARM64

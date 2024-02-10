@@ -43,7 +43,7 @@ members = [
   "src/tools/generate-windows-sys",
   "src/tools/rustdoc-gui-test",
   "src/tools/opt-dist",
-  "src/tools/coverage-dump",
+  "src/tools/coverage-dump", "src/tools/target-doc-generator",
 ]
 
 exclude = [
