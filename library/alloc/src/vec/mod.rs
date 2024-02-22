@@ -2703,7 +2703,11 @@ impl<T, A: Allocator> ops::Deref for Vec<T, A> {
 
     #[inline]
     fn deref(&self) -> &[T] {
-        unsafe { slice::from_raw_parts(self.as_ptr(), self.len) }
+        // slice::from_raw_parts brings in an unsafe precondition check which we want to avoid
+        // here in this really hot functions. To forge an invalid pointer, users basically need
+        // to transmute to pass an unaligned pointer to from_raw_parts (WHICH SHOULD BE DETECTED THERE, FIXME).
+        // So the cost-benefit of this check leans towards not having it.
+        unsafe { &*ptr::slice_from_raw_parts(self.as_ptr(), self.len) }
     }
 }
 
@@ -2711,7 +2715,8 @@ impl<T, A: Allocator> ops::Deref for Vec<T, A> {
 impl<T, A: Allocator> ops::DerefMut for Vec<T, A> {
     #[inline]
     fn deref_mut(&mut self) -> &mut [T] {
-        unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len) }
+        // See deref.
+        unsafe { &mut *ptr::slice_from_raw_parts_mut(self.as_mut_ptr(), self.len) }
     }
 }
 
