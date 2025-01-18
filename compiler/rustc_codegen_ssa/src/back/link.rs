@@ -9,6 +9,7 @@ use std::{env, fmt, fs, io, mem, str};
 
 use cc::windows_registry;
 use itertools::Itertools;
+use rand::RngCore as _;
 use regex::Regex;
 use rustc_arena::TypedArena;
 use rustc_ast::CRATE_NODE_ID;
@@ -51,6 +52,7 @@ use super::linker::{self, Linker};
 use super::metadata::{MetadataPosition, create_wrapper_file};
 use super::rpath::{self, RPathConfig};
 use super::{apple, versioned_llvm_target};
+use crate::errors::ErrorCreatingImportLibrary;
 use crate::{
     CodegenResults, CompiledModule, CrateInfo, NativeLib, common, errors,
     looks_like_rust_object_file,
@@ -378,16 +380,22 @@ fn link_rlib<'a>(
         }
     }
 
-    for output_path in create_dll_import_libs(
-        sess,
-        archive_builder_builder,
-        codegen_results.crate_info.used_libraries.iter(),
-        tmpdir.as_ref(),
-        true,
-    ) {
-        ab.add_archive(&output_path, Box::new(|_| false)).unwrap_or_else(|error| {
-            sess.dcx().emit_fatal(errors::AddNativeLibrary { library_path: output_path, error });
-        });
+    // On Windows, we add the raw-dylib import libraries to the rlibs already.
+    // But on ELF, this is not possible, as a shared object cannot be a member of a static library.
+    // Instead, we add all raw-dylibs to the final link on ELF.
+    if sess.target.is_like_windows {
+        for output_path in create_raw_dylib_dll_import_libs(
+            sess,
+            archive_builder_builder,
+            codegen_results.crate_info.used_libraries.iter(),
+            tmpdir.as_ref(),
+            true,
+        ) {
+            ab.add_archive(&output_path, Box::new(|_| false)).unwrap_or_else(|error| {
+                sess.dcx()
+                    .emit_fatal(errors::AddNativeLibrary { library_path: output_path, error });
+            });
+        }
     }
 
     if let Some(trailing_metadata) = trailing_metadata {
@@ -434,7 +442,7 @@ fn link_rlib<'a>(
 /// then the CodegenResults value contains one NativeLib instance for each block. However, the
 /// linker appears to expect only a single import library for each library used, so we need to
 /// collate the symbols together by library name before generating the import libraries.
-fn collate_raw_dylibs<'a>(
+fn collate_raw_dylibs_windows<'a>(
     sess: &Session,
     used_libraries: impl IntoIterator<Item = &'a NativeLib>,
 ) -> Vec<(String, Vec<DllImport>)> {
@@ -470,14 +478,14 @@ fn collate_raw_dylibs<'a>(
         .collect()
 }
 
-fn create_dll_import_libs<'a>(
+fn create_raw_dylib_dll_import_libs<'a>(
     sess: &Session,
     archive_builder_builder: &dyn ArchiveBuilderBuilder,
     used_libraries: impl IntoIterator<Item = &'a NativeLib>,
     tmpdir: &Path,
     is_direct_dependency: bool,
 ) -> Vec<PathBuf> {
-    collate_raw_dylibs(sess, used_libraries)
+    collate_raw_dylibs_windows(sess, used_libraries)
         .into_iter()
         .map(|(raw_dylib_name, raw_dylib_imports)| {
             let name_suffix = if is_direct_dependency { "_imports" } else { "_imports_indirect" };
@@ -526,6 +534,84 @@ fn create_dll_import_libs<'a>(
             );
 
             output_path
+        })
+        .collect()
+}
+
+/// Extract all symbols defined in raw-dylib libraries, collated by library name.
+///
+/// If we have multiple extern blocks that specify symbols defined in the same raw-dylib library,
+/// then the CodegenResults value contains one NativeLib instance for each block. However, the
+/// linker appears to expect only a single import library for each library used, so we need to
+/// collate the symbols together by library name before generating the import libraries.
+fn collate_raw_dylibs_elf<'a>(
+    sess: &Session,
+    used_libraries: impl IntoIterator<Item = &'a NativeLib>,
+) -> Vec<(String, Vec<DllImport>)> {
+    // Use index maps to preserve original order of imports and libraries.
+    let mut dylib_table = FxIndexMap::<String, FxIndexMap<Symbol, &DllImport>>::default();
+
+    for lib in used_libraries {
+        if lib.kind == NativeLibKind::RawDylib {
+            let filename = if lib.verbatim {
+                lib.name.as_str().to_owned()
+            } else {
+                let ext = sess.target.dll_suffix.as_ref();
+                let prefix = sess.target.dll_prefix.as_ref();
+                format!("{prefix}{}{ext}", lib.name)
+            };
+
+            let imports = dylib_table.entry(filename.clone()).or_default();
+            for import in &lib.dll_imports {
+                imports.insert(import.name, import);
+            }
+        }
+    }
+    sess.dcx().abort_if_errors();
+    dylib_table
+        .into_iter()
+        .map(|(name, imports)| {
+            (name, imports.into_iter().map(|(_, import)| import.clone()).collect())
+        })
+        .collect()
+}
+
+fn create_raw_dylib_elf_stub_shared_objects<'a>(
+    sess: &Session,
+    used_libraries: impl IntoIterator<Item = &'a NativeLib>,
+    raw_dylib_so_dir: &Path,
+) -> Vec<String> {
+    collate_raw_dylibs_elf(sess, used_libraries)
+        .into_iter()
+        .map(|(load_filename, raw_dylib_imports)| {
+            // `load_filename` is the *target/loader* filename that will end up in NEEDED.
+            // Usually this will be something like `libc.so` or `libc.so.6` but with
+            // verbatim it might also be an absolute path.
+            // To be able to support this properly, we always put this load filename
+            // into the SONAME of the library and link it via a temporary file with a random name.
+            // This also avoids naming conflicts with non-raw-dylib linkage of the same library.
+
+            let shared_object = create_elf_raw_dylib_stub(&load_filename, &raw_dylib_imports, sess);
+
+            let random_number = rand::thread_rng().next_u32();
+            let temporary_lib_name = format!("{random_number}{}", sess.target.dll_suffix);
+            let link_path = raw_dylib_so_dir.join(&temporary_lib_name);
+
+            let file = match fs::File::create_new(&link_path) {
+                Ok(file) => file,
+                Err(error) => sess.dcx().emit_fatal(ErrorCreatingImportLibrary {
+                    lib_name: &load_filename,
+                    error: error.to_string(),
+                }),
+            };
+            if let Err(error) = BufWriter::new(file).write_all(&shared_object) {
+                sess.dcx().emit_fatal(ErrorCreatingImportLibrary {
+                    lib_name: &load_filename,
+                    error: error.to_string(),
+                });
+            };
+
+            temporary_lib_name
         })
         .collect()
 }
@@ -2319,15 +2405,39 @@ fn linker_with_args(
         link_output_kind,
     );
 
+    // Raw-dylibs from all crates.
+    let raw_dylib_dir = tmpdir.join("raw-dylibs");
+    if sess.target.binary_format() == object::BinaryFormat::Elf {
+        // On ELF we can't pass the raw-dylibs stubs to the linker as a path,
+        // instead we need to pass them via -l. To find the stub, we need to add
+        // the directory of the stub to the linker search path.
+        // We make an extra directory for this to avoid polluting the search path.
+        if let Err(error) = fs::create_dir(&raw_dylib_dir) {
+            sess.dcx().emit_fatal(errors::CreateTempDir { error })
+        }
+        cmd.include_path(&raw_dylib_dir);
+    }
+
     // Link with the import library generated for any raw-dylib functions.
-    for output_path in create_dll_import_libs(
-        sess,
-        archive_builder_builder,
-        codegen_results.crate_info.used_libraries.iter(),
-        tmpdir,
-        true,
-    ) {
-        cmd.add_object(&output_path);
+    if sess.target.is_like_windows {
+        for output_path in create_raw_dylib_dll_import_libs(
+            sess,
+            archive_builder_builder,
+            codegen_results.crate_info.used_libraries.iter(),
+            tmpdir,
+            true,
+        ) {
+            cmd.add_object(&output_path);
+        }
+    } else {
+        for link_path in create_raw_dylib_elf_stub_shared_objects(
+            sess,
+            codegen_results.crate_info.used_libraries.iter(),
+            &raw_dylib_dir,
+        ) {
+            // Always use verbatim linkage, see comments in create_raw_dylib_elf_stub_shared_objects.
+            cmd.link_dylib_by_name(&link_path, true, false);
+        }
     }
     // As with add_upstream_native_libraries, we need to add the upstream raw-dylib symbols in case
     // they are used within inlined functions or instantiated generic functions. We do this *after*
@@ -2346,19 +2456,35 @@ fn linker_with_args(
         .native_libraries
         .iter()
         .filter_map(|(&cnum, libraries)| {
-            (dependency_linkage[cnum] != Linkage::Static).then_some(libraries)
+            if sess.target.is_like_windows {
+                (dependency_linkage[cnum] != Linkage::Static).then_some(libraries)
+            } else {
+                Some(libraries)
+            }
         })
         .flatten()
         .collect::<Vec<_>>();
     native_libraries_from_nonstatics.sort_unstable_by(|a, b| a.name.as_str().cmp(b.name.as_str()));
-    for output_path in create_dll_import_libs(
-        sess,
-        archive_builder_builder,
-        native_libraries_from_nonstatics,
-        tmpdir,
-        false,
-    ) {
-        cmd.add_object(&output_path);
+
+    if sess.target.is_like_windows {
+        for output_path in create_raw_dylib_dll_import_libs(
+            sess,
+            archive_builder_builder,
+            native_libraries_from_nonstatics,
+            tmpdir,
+            false,
+        ) {
+            cmd.add_object(&output_path);
+        }
+    } else {
+        for link_path in create_raw_dylib_elf_stub_shared_objects(
+            sess,
+            native_libraries_from_nonstatics,
+            &raw_dylib_dir,
+        ) {
+            // Always use verbatim linkage, see comments in create_raw_dylib_elf_stub_shared_objects.
+            cmd.link_dylib_by_name(&link_path, true, false);
+        }
     }
 
     // Library linking above uses some global state for things like `-Bstatic`/`-Bdynamic` to make
@@ -3355,4 +3481,148 @@ fn add_lld_args(
             cmd.cc_arg(format!("--target={}", versioned_llvm_target(sess)));
         }
     }
+}
+
+/// Create an ELF .so stub file for raw-dylib.
+/// It exports all the provided symbols, but is otherwise empty.
+fn create_elf_raw_dylib_stub(soname: &str, symbols: &[DllImport], sess: &Session) -> Vec<u8> {
+    use object::write::elf as write;
+    use object::{Architecture, elf};
+
+    let mut stub_buf = Vec::new();
+
+    // When using the low-level object::write::elf, the order of the reservations
+    // needs to match the order of the writing.
+
+    let mut stub = write::Writer::new(object::Endianness::Little, true, &mut stub_buf);
+
+    // These initial reservations don't reserve any space yet.
+    stub.reserve_null_dynamic_symbol_index();
+
+    let dynstrs = symbols
+        .iter()
+        .map(|sym| {
+            stub.reserve_dynamic_symbol_index();
+            (sym, stub.add_dynamic_string(sym.name.as_str().as_bytes()))
+        })
+        .collect::<Vec<_>>();
+
+    let soname = stub.add_dynamic_string(soname.as_bytes());
+
+    stub.reserve_shstrtab_section_index();
+    let text_section_name = stub.add_section_name(".text".as_bytes());
+    let text_section = stub.reserve_section_index();
+    stub.reserve_dynstr_section_index();
+    stub.reserve_dynsym_section_index();
+    stub.reserve_dynamic_section_index();
+
+    // These reservations determine the actual layout order of the object file.
+    stub.reserve_file_header();
+    stub.reserve_shstrtab();
+    stub.reserve_section_headers();
+    stub.reserve_dynstr();
+    stub.reserve_dynsym();
+    stub.reserve_dynamic(2); // DT_SONAME, DT_NULL
+
+    // File header
+    let Some((arch, sub_arch)) = sess.target.object_architecture(&sess.unstable_target_features)
+    else {
+        sess.dcx().fatal(format!(
+            "raw-dylib is not supported for the architecture `{}`",
+            sess.target.arch
+        ));
+    };
+    let e_machine = match (arch, sub_arch) {
+        (Architecture::Aarch64, None) => elf::EM_AARCH64,
+        (Architecture::Aarch64_Ilp32, None) => elf::EM_AARCH64,
+        (Architecture::Arm, None) => elf::EM_ARM,
+        (Architecture::Avr, None) => elf::EM_AVR,
+        (Architecture::Bpf, None) => elf::EM_BPF,
+        (Architecture::Csky, None) => elf::EM_CSKY,
+        (Architecture::E2K32, None) => elf::EM_MCST_ELBRUS,
+        (Architecture::E2K64, None) => elf::EM_MCST_ELBRUS,
+        (Architecture::I386, None) => elf::EM_386,
+        (Architecture::X86_64, None) => elf::EM_X86_64,
+        (Architecture::X86_64_X32, None) => elf::EM_X86_64,
+        (Architecture::Hexagon, None) => elf::EM_HEXAGON,
+        (Architecture::LoongArch64, None) => elf::EM_LOONGARCH,
+        (Architecture::M68k, None) => elf::EM_68K,
+        (Architecture::Mips, None) => elf::EM_MIPS,
+        (Architecture::Mips64, None) => elf::EM_MIPS,
+        (Architecture::Mips64_N32, None) => elf::EM_MIPS,
+        (Architecture::Msp430, None) => elf::EM_MSP430,
+        (Architecture::PowerPc, None) => elf::EM_PPC,
+        (Architecture::PowerPc64, None) => elf::EM_PPC64,
+        (Architecture::Riscv32, None) => elf::EM_RISCV,
+        (Architecture::Riscv64, None) => elf::EM_RISCV,
+        (Architecture::S390x, None) => elf::EM_S390,
+        (Architecture::Sbf, None) => elf::EM_SBF,
+        (Architecture::Sharc, None) => elf::EM_SHARC,
+        (Architecture::Sparc, None) => elf::EM_SPARC,
+        (Architecture::Sparc32Plus, None) => elf::EM_SPARC32PLUS,
+        (Architecture::Sparc64, None) => elf::EM_SPARCV9,
+        (Architecture::Xtensa, None) => elf::EM_XTENSA,
+        _ => {
+            sess.dcx().fatal(format!(
+                "raw-dylib is not supported for the architecture `{}`",
+                sess.target.arch
+            ));
+        }
+    };
+
+    stub.write_file_header(&write::FileHeader {
+        os_abi: super::metadata::elf_os_abi(sess),
+        abi_version: 0,
+        e_type: object::elf::ET_DYN,
+        e_machine,
+        e_entry: 0,
+        e_flags: super::metadata::elf_e_flags(arch, sess),
+    })
+    .unwrap();
+
+    // .shstrtab
+    stub.write_shstrtab();
+
+    // Section headers
+    stub.write_null_section_header();
+    stub.write_shstrtab_section_header();
+    // Create a dummy .text section for our dummy symbols.
+    stub.write_section_header(&write::SectionHeader {
+        name: Some(text_section_name),
+        sh_type: elf::SHT_PROGBITS,
+        sh_flags: 0,
+        sh_addr: 0,
+        sh_offset: 0,
+        sh_size: 0,
+        sh_link: 0,
+        sh_info: 0,
+        sh_addralign: 1,
+        sh_entsize: 0,
+    });
+    stub.write_dynstr_section_header(0);
+    stub.write_dynsym_section_header(0, 1);
+    stub.write_dynamic_section_header(0);
+
+    // .dynstr
+    stub.write_dynstr();
+
+    // .dynsym
+    stub.write_null_dynamic_symbol();
+    for (_, name) in dynstrs {
+        stub.write_dynamic_symbol(&write::Sym {
+            name: Some(name),
+            st_info: (elf::STB_GLOBAL << 4) | elf::STT_NOTYPE,
+            st_other: elf::STV_DEFAULT,
+            section: Some(text_section),
+            st_shndx: 0, // ignored by object in favor of the `section` field
+            st_value: 0,
+            st_size: 0,
+        });
+    }
+
+    // .dynamic
+    stub.write_dynamic_string(elf::DT_SONAME, soname);
+    stub.write_dynamic(elf::DT_NULL, 0);
+
+    stub_buf
 }

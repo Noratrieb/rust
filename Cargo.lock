@@ -3542,6 +3542,7 @@ dependencies = [
  "libc",
  "object 0.36.7",
  "pathdiff",
+ "rand",
  "regex",
  "rustc_abi",
  "rustc_arena",
