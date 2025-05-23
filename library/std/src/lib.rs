@@ -741,6 +741,8 @@ include!("../../core/src/primitive_docs.rs");
 // the rustdoc documentation for the existing keywords. Using `include!`
 // because rustdoc only looks for these modules at the crate level.
 include!("keyword_docs.rs");
+#[cfg(not(bootstrap))]
+include!("attribute_docs.rs");
 
 // This is required to avoid an unstable error when `restricted-std` is not
 // enabled. The use of #![feature(restricted_std)] in rustc-std-workspace-std

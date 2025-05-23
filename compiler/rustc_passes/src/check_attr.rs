@@ -1346,6 +1346,12 @@ impl<'tcx> CheckAttrVisitor<'tcx> {
                             }
                         }
 
+                        Some(sym::attribute) => {
+                            if self.check_attr_not_crate_level(meta, hir_id, "attribute") {
+                                // TODO: check
+                            }
+                        }
+
                         Some(sym::fake_variadic) => {
                             if self.check_attr_not_crate_level(meta, hir_id, "fake_variadic") {
                                 self.check_doc_fake_variadic(meta, hir_id);

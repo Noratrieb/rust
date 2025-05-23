@@ -460,6 +460,11 @@ pub enum ItemKind {
     /// [`Item`]s of this kind only come from the come library and exist solely
     /// to carry documentation for the respective keywords.
     Keyword,
+    /// An attribute declaration.
+    ///
+    /// [`Item`]s of this kind only come from the come library and exist solely
+    /// to carry documentation for the respective attributes.
+    Attribute,
 }
 
 /// Specific fields of an item.

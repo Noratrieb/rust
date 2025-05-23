@@ -239,6 +239,46 @@ impl ExternalCrate {
         }
     }
 
+    pub(crate) fn attributes(&self, tcx: TyCtxt<'_>) -> ThinVec<(DefId, Symbol)> {
+        let root = self.def_id();
+
+        let as_attribute = |res: Res<!>| {
+            if let Res::Def(DefKind::Mod, def_id) = res {
+                let mut keyword = None;
+                let meta_items = tcx
+                    .get_attrs(def_id, sym::doc)
+                    .flat_map(|attr| attr.meta_item_list().unwrap_or_default());
+                for meta in meta_items {
+                    if meta.has_name(sym::attribute)
+                        && let Some(v) = meta.value_str()
+                    {
+                        keyword = Some(v);
+                        break;
+                    }
+                }
+                return keyword.map(|p| (def_id, p));
+            }
+            None
+        };
+        if root.is_local() {
+            tcx.hir_root_module()
+                .item_ids
+                .iter()
+                .filter_map(|&id| {
+                    let item = tcx.hir_item(id);
+                    match item.kind {
+                        hir::ItemKind::Mod(..) => {
+                            as_attribute(Res::Def(DefKind::Mod, id.owner_id.to_def_id()))
+                        }
+                        _ => None,
+                    }
+                })
+                .collect()
+        } else {
+            tcx.module_children(root).iter().map(|item| item.res).filter_map(as_attribute).collect()
+        }
+    }
+
     pub(crate) fn primitives(&self, tcx: TyCtxt<'_>) -> ThinVec<(DefId, PrimitiveType)> {
         let root = self.def_id();
 
@@ -597,6 +637,9 @@ impl Item {
     pub(crate) fn is_keyword(&self) -> bool {
         self.type_() == ItemType::Keyword
     }
+    pub(crate) fn is_attribute(&self) -> bool {
+        self.type_() == ItemType::Attribute
+    }
     pub(crate) fn is_stripped(&self) -> bool {
         match self.kind {
             StrippedItem(..) => true,
@@ -724,7 +767,9 @@ impl Item {
             // Primitives and Keywords are written in the source code as private modules.
             // The modules need to be private so that nobody actually uses them, but the
             // keywords and primitives that they are documenting are public.
-            ItemKind::KeywordItem | ItemKind::PrimitiveItem(_) => return Some(Visibility::Public),
+            ItemKind::KeywordItem | ItemKind::AttributeItem | ItemKind::PrimitiveItem(_) => {
+                return Some(Visibility::Public);
+            }
             // Variant fields inherit their enum's visibility.
             StructFieldItem(..) if is_field_vis_inherited(tcx, def_id) => {
                 return None;
@@ -923,6 +968,7 @@ pub(crate) enum ItemKind {
     /// An item that has been stripped by a rustdoc pass
     StrippedItem(Box<ItemKind>),
     KeywordItem,
+    AttributeItem,
 }
 
 impl ItemKind {
@@ -963,7 +1009,8 @@ impl ItemKind {
             | RequiredAssocTypeItem(..)
             | AssocTypeItem(..)
             | StrippedItem(_)
-            | KeywordItem => [].iter(),
+            | KeywordItem
+            | AttributeItem => [].iter(),
         }
     }
 
